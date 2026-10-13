@@ -3326,7 +3326,14 @@ class RingService : Service() {
             Log.w(TAG, "进入前台失败，降级为普通服务", e)
         }
 
-        RingAudioController.get(this).start(ringing.vibrate)
+        // 播放失败不要让服务崩掉。RingAudioController.start() 失败时会把状态回滚成
+        // "未在响铃"再原样抛出，所以 RingActivity.onStart() 里那次 start() 会重新尝试播放 ——
+        // 这正是 spec 5.6 想要的降级路径。因此这里只记录，不重抛。
+        try {
+            RingAudioController.get(this).start(ringing.vibrate)
+        } catch (t: Throwable) {
+            Log.w(TAG, "开始播放铃声失败，交给响铃界面兜底", t)
+        }
 
         return START_NOT_STICKY
     }
@@ -3500,6 +3507,7 @@ package com.example.clock.ui.ring
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -3563,7 +3571,16 @@ class RingActivity : ComponentActivity() {
      */
     override fun onStart() {
         super.onStart()
-        ringing?.let { RingAudioController.get(this).start(it.vibrate) }
+        // 这是响铃的兜底路径，也是最后一道。播放失败时不能让它把 Activity 带崩 ——
+        // 界面留着，用户还能贪睡或关闭，总好过弹一个崩溃对话框。
+        // 控制器失败时已把状态回滚为"未在响铃"，所以这里吞掉不会留下陈旧状态。
+        ringing?.let {
+            try {
+                RingAudioController.get(this).start(it.vibrate)
+            } catch (t: Throwable) {
+                Log.w(TAG, "降级播放铃声也失败了", t)
+            }
+        }
     }
 
     private fun snooze() {
@@ -3582,6 +3599,8 @@ class RingActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val TAG = "RingActivity"
+
         fun start(context: Context, ringing: RingingAlarm) {
             val intent = Intent(context, RingActivity::class.java).apply {
                 ringing.writeTo(this)

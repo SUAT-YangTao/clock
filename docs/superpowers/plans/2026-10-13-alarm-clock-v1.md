@@ -3520,6 +3520,7 @@ package com.example.clock.ui.ring
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -3546,8 +3547,13 @@ class RingActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // 锁屏之上直接显示，无需解锁；同时点亮屏幕。
-        setShowWhenLocked(true)
-        setTurnScreenOn(true)
+        // 这两个方法是 API 27（O_MR1）才有的，而本项目 minSdk = 26：不加版本判断的话，
+        // 在一台 Android 8.0 机器上一响铃就 NoSuchMethodError 崩溃 —— 那是这个 app
+        // 最不能崩的时刻。API 26 上退回普通显示即可，不影响"闹钟一定会响"。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
 
         val incoming = RingingAlarm.from(intent)
         if (incoming == null) {

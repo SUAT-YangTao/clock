@@ -641,7 +641,7 @@ class RepeatDaysTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.RepeatDaysTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: RepeatDays`。
+预期：编译失败，`Unresolved reference 'RepeatDays'`。
 
 - [ ] **Step 3: 写实现**
 
@@ -914,7 +914,7 @@ class NextTriggerTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.NextTriggerTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: NextTrigger`。
+预期：编译失败，`Unresolved reference 'NextTrigger'`。
 
 - [ ] **Step 3: 写实现**
 
@@ -1119,7 +1119,7 @@ class NextAlarmTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.NextAlarmTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: Alarm`。
+预期：编译失败，`Unresolved reference 'Alarm'`。
 
 - [ ] **Step 3: 写 `Alarm.kt`**
 
@@ -1299,7 +1299,7 @@ class AlarmMappingTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.data.AlarmMappingTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: AlarmEntity`。
+预期：编译失败，`Unresolved reference 'AlarmEntity'`。
 
 - [ ] **Step 3: 写实现**
 
@@ -1576,7 +1576,7 @@ class AlarmRepositoryTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.data.AlarmRepositoryTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: AlarmDatabase`。
+预期：编译失败，`Unresolved reference 'AlarmDatabase'`。
 
 若报错 `Robolectric requires ... android-all` 或下载失败，检查 `app/src/test/resources/robolectric.properties` 是否存在且内容为 `sdk=33`。
 
@@ -2015,7 +2015,7 @@ class AlarmSchedulerTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.AlarmSchedulerTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: AlarmScheduler`。
+预期：编译失败，`Unresolved reference 'AlarmScheduler'`。
 
 - [ ] **Step 3: 创建 AlarmReceiver 占位**
 
@@ -2379,7 +2379,7 @@ class RingAudioControllerTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingAudioControllerTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: AlarmPlayer`。
+预期：编译失败，`Unresolved reference 'AlarmPlayer'`。
 
 - [ ] **Step 3: 写实现**
 
@@ -2659,7 +2659,7 @@ class RingingAlarmTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingingAlarmTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: RingingAlarm`。
+预期：编译失败，`Unresolved reference 'RingingAlarm'`。
 
 - [ ] **Step 3: 写实现**
 
@@ -2843,7 +2843,7 @@ class SnoozeManagerTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.SnoozeManagerTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: SnoozeManager`。
+预期：编译失败，`Unresolved reference 'SnoozeManager'`。
 
 - [ ] **Step 3: 写实现**
 
@@ -3086,7 +3086,7 @@ class RingNotificationTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingNotificationTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: RingNotification`。
+预期：编译失败，`Unresolved reference 'RingNotification'`。
 
 - [ ] **Step 3: 写通知构建**
 
@@ -3812,7 +3812,7 @@ class SystemEventReceiverTest {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.AlarmReceiverTest" --tests "com.example.clock.alarm.SystemEventReceiverTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: SystemEventReceiver`（`AlarmReceiver` 此刻还是空占位，相关断言会失败）。
+预期：编译失败，`Unresolved reference 'SystemEventReceiver'`（`AlarmReceiver` 此刻还是空占位，相关断言会失败）。
 
 - [ ] **Step 5: 写 AlarmReceiver**
 
@@ -4259,7 +4259,7 @@ fun AlarmEditScreen(
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.ui.NotificationPermissionTest" --no-daemon
 ```
 
-预期：编译失败，`Unresolved reference: shouldRequestNotificationPermission`。
+预期：编译失败，`Unresolved reference 'shouldRequestNotificationPermission'`。
 
 - [ ] **Step 4: 写通知权限模块**
 

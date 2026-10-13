@@ -49,7 +49,7 @@ spec 的 §2.2 文件清单里列了两个文件，本计划**不创建**它们�
 2. **应用被用户从最近任务列表划掉后闹钟不响。** 若前台服务没起来、或 `AlarmManager` 注册被清理，闹钟会静默失效且用户毫不知情。→ 只能真机验证（Task 17 第 7 条）。
 3. **手机重启后闹钟不响。** `SystemEventReceiver` 的 manifest 声明或 `android:exported` 写错时，`BOOT_COMPLETED` 收不到，且**没有任何报错**。→ Task 13 有 Robolectric 测试断言 receiver 触发了重算，Task 17 第 5 条真机复核。
 4. **用户拒绝 `POST_NOTIFICATIONS` 权限（Android 13）。** 前台服务的常驻通知不可见，若全屏 Activity 也被抑制，就没有任何关闭入口，铃声会一直响到没电。→ Task 14 必须处理拒绝分支，Task 17 第 13 条验证。
-5. **前台服务启动被系统拒绝时（issue 238340795，约 1/2500）出现双路铃声重叠或完全无声。** 降级路径的正确性依赖 `RingAudioController` 的幂等性。→ Task 9 用 fake player 测试幂等性，Task 17 第 11、12 条真机复核。
+5. **前台服务启动被系统拒绝时（issue 238340795，约 1/2500）出现双路铃声重叠或完全无声。** 降级路径的正确性依赖 `RingAudioController` 的幂等性。→ Task 8 用 fake player 测试幂等性，Task 17 第 11、12 条真机复核。
 6. **一次性闹钟响铃后没有自动关闭，第二天同一时间又响。** → Task 13 有 Robolectric 测试，Task 17 第 3 条真机复核。
 7. **手机处于静音/勿扰模式时闹钟不响。** 预期行为是**仍然响**（`USAGE_ALARM` 音频流在勿扰下按系统设置可能仍被抑制，需要确认实际表现并记录）。→ Task 17 第 14 条。
 
@@ -4549,6 +4549,7 @@ git commit -m "feat(ui): 新增导航骨架与通知权限请求"
 **Files:**
 - Create: `app/src/main/java/com/example/clock/ui/list/AlarmListViewModel.kt`
 - Modify: `app/src/main/java/com/example/clock/ui/list/AlarmListScreen.kt`（替换 Task 14 的占位）
+- Test: `app/src/test/java/com/example/clock/ui/list/AlarmListSummaryTest.kt`
 
 **Interfaces:**
 - Consumes: `AlarmRepository`（Task 6）、`NextTrigger.nextOf`/`formatRemaining`（Task 4）、`Alarm`、`RepeatDays.summary()`（Task 2）
@@ -4615,35 +4616,122 @@ class AlarmListViewModel(private val repository: AlarmRepository) : ViewModel() 
         viewModelScope.launch { repository.save(alarm) }
     }
 
-    private fun buildNextSummary(alarms: List<Alarm>): String? {
-        // 列表为空时整页走空状态，不显示摘要行。
-        if (alarms.isEmpty()) return null
-        val now = ZonedDateTime.now()
-        val next = NextTrigger.nextOf(alarms, now) ?: return "没有启用的闹钟"
-        val weekday = weekdayName(next.at.dayOfWeek.value)
-        val time = "%02d:%02d".format(next.at.hour, next.at.minute)
-        return "下一个闹钟：$weekday $time（${NextTrigger.formatRemaining(now, next.at)}）"
-    }
-
-    private fun weekdayName(value: Int): String = when (value) {
-        1 -> "周一"
-        2 -> "周二"
-        3 -> "周三"
-        4 -> "周四"
-        5 -> "周五"
-        6 -> "周六"
-        else -> "周日"
-    }
-
     companion object {
         fun factory(repository: AlarmRepository): ViewModelProvider.Factory = viewModelFactory {
             initializer { AlarmListViewModel(repository) }
         }
     }
 }
+
+/**
+ * 摘要行的文案。三个分支各是一条明确的契约（见本任务 Interfaces）：
+ * 列表为空 -> null（整页走空状态）；列表非空但没有启用的闹钟 -> 「没有启用的闹钟」；
+ * 否则 -> 「下一个闹钟：周X HH:MM（剩余…）」。
+ *
+ * 刻意放在**文件顶层**而不是 ViewModel 的成员：它是纯函数，不需要 `this`，放在顶层就能被
+ * 一个不构造 ViewModel、不碰协程的普通 JVM 测试直接调用（见 Step 2）。
+ *
+ * `now` 可注入，默认取当前时刻；生产调用点不传，测试传固定值以获得确定性 ——
+ * 否则第三个分支的期望值会随墙上时钟漂移，这个测试根本没法写。
+ *
+ * 注意 [NextTrigger.nextOf] 自己就会过滤掉未启用的闹钟（Task 4），所以这里必须传
+ * **未过滤**的完整列表；正因如此「没有启用的闹钟」这个分支是靠 nextOf 返回 null 命中的。
+ */
+internal fun buildNextSummary(
+    alarms: List<Alarm>,
+    now: ZonedDateTime = ZonedDateTime.now(),
+): String? {
+    // 列表为空时整页走空状态，不显示摘要行。
+    if (alarms.isEmpty()) return null
+    val next = NextTrigger.nextOf(alarms, now) ?: return "没有启用的闹钟"
+    val weekday = weekdayName(next.at.dayOfWeek.value)
+    val time = "%02d:%02d".format(next.at.hour, next.at.minute)
+    return "下一个闹钟：$weekday $time（${NextTrigger.formatRemaining(now, next.at)}）"
+}
+
+private fun weekdayName(value: Int): String = when (value) {
+    1 -> "周一"
+    2 -> "周二"
+    3 -> "周三"
+    4 -> "周四"
+    5 -> "周五"
+    6 -> "周六"
+    else -> "周日"
+}
 ```
 
-- [ ] **Step 2: 写界面**
+- [ ] **Step 2: 写摘要逻辑的测试**
+
+`app/src/test/java/com/example/clock/ui/list/AlarmListSummaryTest.kt`
+
+摘要行是本页最显眼的一行文案，而它有三个分支，且第三个分支依赖一条**跨任务契约**：
+`NextTrigger.nextOf` 会自己过滤未启用的闹钟（Task 4），所以「列表非空但一个都没启用」
+必须落到「没有启用的闹钟」而不是 null。
+
+因为 `buildNextSummary` 是顶层 `internal` 纯函数、`now` 又可注入，这是一个**纯 JVM 测试**：
+不需要 Robolectric，不需要协程测试库，也不需要构造 `AlarmListViewModel`。
+
+```kotlin
+package com.example.clock.ui.list
+
+import com.example.clock.domain.Alarm
+import com.example.clock.domain.RepeatDays
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.time.ZonedDateTime
+
+class AlarmListSummaryTest {
+
+    // 固定为周一 22:00（+08:00），让"下一个"的期望值完全确定。
+    private val now = ZonedDateTime.parse("2026-10-13T22:00:00+08:00")
+
+    private fun summaryOf(vararg alarms: Alarm) = buildNextSummary(alarms.toList(), now)
+
+    @Test
+    fun `列表为空时没有摘要`() {
+        assertNull(summaryOf())
+    }
+
+    @Test
+    fun `有闹钟但一个都没启用时提示没有启用的闹钟`() {
+        val disabled = Alarm(
+            id = 1L, hour = 7, minute = 0,
+            repeatDays = RepeatDays.EVERY_DAY, enabled = false,
+        )
+        assertEquals("没有启用的闹钟", summaryOf(disabled))
+    }
+
+    @Test
+    fun `有启用的闹钟时给出下一个的时刻与剩余时间`() {
+        // now 是周一 22:00，工作日 7:00 的下一次落在周二。
+        val enabled = Alarm(id = 1L, hour = 7, minute = 0, repeatDays = RepeatDays.WEEKDAYS)
+        assertTrue(summaryOf(enabled)!!.startsWith("下一个闹钟：周二 07:00（"))
+    }
+
+    @Test
+    fun `未启用的闹钟不参与计算`() {
+        val disabled = Alarm(
+            id = 1L, hour = 7, minute = 0,
+            repeatDays = RepeatDays.EVERY_DAY, enabled = false,
+        )
+        val enabled = Alarm(id = 2L, hour = 9, minute = 30, repeatDays = RepeatDays.EVERY_DAY)
+        assertTrue(summaryOf(disabled, enabled)!!.contains("09:30"))
+    }
+}
+```
+
+写完后先单独跑一次确认是绿的。注意这个测试钉的是 Step 1 里已经写好的代码，所以**没有 RED 阶段**
+（它是补钉既有行为的测试，不是 TDD 的第一枪）：
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.ui.list.AlarmListSummaryTest" --no-daemon
+```
+
+预期：4 个测试 PASS。
+
+- [ ] **Step 3: 写界面**
 
 `app/src/main/java/com/example/clock/ui/list/AlarmListScreen.kt`（整体替换）
 
@@ -4880,7 +4968,7 @@ private fun buildSubtitle(alarm: Alarm): String =
     else "${alarm.label} · ${alarm.repeatDays.summary()}"
 ```
 
-- [ ] **Step 3: 构建确认通过**
+- [ ] **Step 4: 构建确认通过**
 
 ```powershell
 .\gradlew.bat assembleDebug --no-daemon
@@ -4888,17 +4976,19 @@ private fun buildSubtitle(alarm: Alarm): String =
 
 预期：`BUILD SUCCESSFUL`。
 
-- [ ] **Step 4: 跑全量测试确认无回归**
+- [ ] **Step 5: 跑全量测试确认无回归**
 
 ```powershell
 .\gradlew.bat test --no-daemon
 ```
 
-- [ ] **Step 5: Commit**
+预期：全绿，且其中包含本任务新增的 `AlarmListSummaryTest` 的 4 个测试。
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add app/src/main/java/com/example/clock/ui/list/
-git commit -m "feat(ui): 新增闹钟列表界面"
+git add app/src/main/java/com/example/clock/ui/list/ app/src/test/java/com/example/clock/ui/list/
+git commit -m "feat(ui): 新增闹钟列表界面与摘要逻辑测试"
 ```
 
 ---

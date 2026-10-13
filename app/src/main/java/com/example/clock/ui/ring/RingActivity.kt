@@ -8,6 +8,9 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.example.clock.alarm.RingAudioController
 import com.example.clock.alarm.RingService
 import com.example.clock.alarm.RingingAlarm
@@ -22,7 +25,11 @@ import com.example.clock.ui.theme.ClockTheme
  */
 class RingActivity : ComponentActivity() {
 
-    private var ringing: RingingAlarm? = null
+    // 用 Compose 状态而不是普通字段：manifest 把本 Activity 声明为 singleTask，
+    // 第二个闹钟触发时走的是 onNewIntent，只有被 Compose 观察到的状态才能让界面跟着换。
+    // 若用普通 var，界面会停在第一个闹钟的时间上，而贪睡按钮读的是字段 ——
+    // 结果就是"看到的是 A、贪睡的却是 B"。
+    private var ringing by mutableStateOf<RingingAlarm?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,11 +55,15 @@ class RingActivity : ComponentActivity() {
                 // 返回键不关闭响铃：半睡半醒时误触返回键等于把闹钟静音了。
                 BackHandler(enabled = true) { /* 刻意留空 */ }
 
-                RingScreen(
-                    ringing = incoming,
-                    onSnooze = ::snooze,
-                    onDismiss = ::dismiss,
-                )
+                // 读的是可观察状态，不是 onCreate 里的局部 incoming ——
+                // 这样 onNewIntent 换成新闹钟时界面会重新组合。
+                ringing?.let {
+                    RingScreen(
+                        ringing = it,
+                        onSnooze = ::snooze,
+                        onDismiss = ::dismiss,
+                    )
+                }
             }
         }
     }

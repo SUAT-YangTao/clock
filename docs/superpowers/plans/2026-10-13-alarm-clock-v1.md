@@ -743,7 +743,7 @@ git commit -m "feat(domain): 新增 RepeatDays 值对象与中文摘要"
 
 - [ ] **Step 1: 写失败的测试**
 
-覆盖 spec 第 4.2 节表格的全部 12 个场景。全部使用 `Asia/Shanghai` 时区。
+覆盖 spec 第 4.2 节表格的全部 12 个场景，外加 6 个加固用例（毫秒越界、结果严格晚于 now、秒纳秒归零、跨年、闰年 2 月 29 日、非法参数）——**共 18 个**，以下方 Step 1 的测试代码和 Step 4 的「全部 18 个测试 PASS」为准。全部使用 `Asia/Shanghai` 时区。
 
 `app/src/test/java/com/example/clock/domain/NextTriggerTest.kt`
 

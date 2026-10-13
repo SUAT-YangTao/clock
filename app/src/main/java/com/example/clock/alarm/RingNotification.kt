@@ -77,6 +77,12 @@ object RingNotification {
     ): PendingIntent {
         val intent = Intent(RingService.ACTION_SHOW_RING_UI).apply {
             setPackage(context.packageName)
+            // 全屏 Intent 由系统在非 Activity 的上下文里启动，而且这里是**隐式** Intent
+            // （靠上面的 action 解析到 RingActivity）。上面 manifest 已把 RingActivity
+            // 声明为 singleTask + taskAffinity=""，补 NEW_TASK 让这个 Intent 与那个声明一致。
+            // 代价不对称：若本不需要，singleTask Activity 上的 NEW_TASK 不改变任何行为；
+            // 若需要而没加，全屏响铃会静默退化成一条普通通知。
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ringing.writeTo(this)
         }
         return PendingIntent.getActivity(

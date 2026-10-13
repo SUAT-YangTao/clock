@@ -1,2 +1,15 @@
-# 隔离工作树（using-git-worktrees 用）
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# 隔离工作树与 SDD 工作区（见 using-git-worktrees）
 .worktrees/
+.superpowers/

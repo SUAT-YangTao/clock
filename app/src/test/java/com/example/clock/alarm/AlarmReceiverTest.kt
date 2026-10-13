@@ -108,6 +108,16 @@ class AlarmReceiverTest {
     fun `响铃后会重新注册重复闹钟的下一次`() {
         val id = seedAlarm(RepeatDays.EVERY_DAY_MASK)
 
+        // 收割掉播种时那次注册（save 会经由 AppGraph 的回调注册一次），让这个用例
+        // 从"没有任何注册"出发：这样响铃之后仍能看到待触发注册，就只可能是
+        // Receiver 自己重新注册的结果。不这么做，本用例即使把 scheduleAll() 删掉
+        // 也照样通过 —— 播种留下的注册会替它满足断言。
+        //
+        // 刻意放在**本用例内**而不是 @Before：隔壁 `一次性闹钟响铃后不再有待触发的闹钟`
+        // 断言的是"没有注册"，恰恰依赖播种那次注册存在，把它提到 @Before 会让那个
+        // 用例变成恒真。两个用例对前置条件的要求是相反的。
+        AppGraph.scheduler(context).cancel(id)
+
         AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true)))
 
         val alarmManager = context.getSystemService(AlarmManager::class.java)

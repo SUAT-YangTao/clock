@@ -2,6 +2,7 @@ package com.example.clock.alarm
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -16,6 +17,26 @@ class RingAudioControllerTest {
         override fun start(vibrate: Boolean) {
             startCount++
             lastVibrate = vibrate
+        }
+
+        override fun stop() {
+            stopCount++
+        }
+    }
+
+    /**
+     * 一个 start() 必定抛异常的播放器。
+     *
+     * 用来钉住"失败的 start 不许留下关不掉的铃声"这条不变量 —— FakePlayer 永远成功，
+     * 结构上根本测不到失败路径。
+     */
+    private class ThrowingPlayer : AlarmPlayer {
+        var startCount = 0
+        var stopCount = 0
+
+        override fun start(vibrate: Boolean) {
+            startCount++
+            throw SecurityException("模拟播放途中失败")
         }
 
         override fun stop() {
@@ -99,5 +120,16 @@ class RingAudioControllerTest {
         threads.forEach { it.join() }
 
         assertEquals("并发 start 也只应播放一次", 1, player.startCount)
+    }
+
+    @Test
+    fun `播放器抛异常时不会留下关不掉的铃声`() {
+        val throwing = ThrowingPlayer()
+        val c = RingAudioController(throwing)
+
+        assertThrows(SecurityException::class.java) { c.start(vibrate = true) }
+
+        assertEquals("失败的 start 必须自己收尾，把播放器停掉", 1, throwing.stopCount)
+        assertFalse("失败的 start 之后不能还声称在响铃", c.isRinging)
     }
 }

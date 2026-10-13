@@ -28,8 +28,18 @@ class RingAudioController(private val player: AlarmPlayer) {
     fun start(vibrate: Boolean) {
         synchronized(lock) {
             if (ringing) return
-            player.start(vibrate)
+            // 先把标志置为"响铃中"再真正播放。顺序不能反：mediaPlayer.start() 已经播出
+            // 声音之后，startVibrating() 仍可能抛异常（例如震动权限缺失）。若标志还是
+            // false，stop() 会在 `if (!ringing) return` 上提前返回，用户就关不掉这通铃声了。
             ringing = true
+            try {
+                player.start(vibrate)
+            } catch (t: Throwable) {
+                // 播放器可能已经播了一半，尽力收尾，回滚标志，再把异常原样抛出。
+                runCatching { player.stop() }
+                ringing = false
+                throw t
+            }
         }
     }
 
@@ -70,20 +80,30 @@ class MediaPlayerAlarmPlayer(private val context: Context) : AlarmPlayer {
         val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
 
-        mediaPlayer = MediaPlayer().apply {
-            setAudioAttributes(
+        try {
+            // 先把实例赋给字段，再调用会抛异常的 setDataSource / prepare / start。
+            // 不能写成 `mediaPlayer = MediaPlayer().apply { ... }`：apply 里任何一步抛异常，
+            // 整个赋值都会被跳过，字段停在 null，新建的 MediaPlayer 从此无人能释放，
+            // 反复失败会一直占着音频编解码器。
+            val mp = MediaPlayer()
+            mediaPlayer = mp
+            mp.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build(),
             )
-            setDataSource(context, uri)
-            isLooping = true
-            prepare()
-            start()
+            mp.setDataSource(context, uri)
+            mp.isLooping = true
+            mp.prepare()
+            mp.start()
+            if (vibrate) startVibrating()
+        } catch (t: Throwable) {
+            // 半途失败也要把已经建好的 MediaPlayer 放掉，再把异常原样抛出。
+            releasePlayer()
+            stopVibrating()
+            throw t
         }
-
-        if (vibrate) startVibrating()
     }
 
     override fun stop() {

@@ -2278,6 +2278,7 @@ package com.example.clock.alarm
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -2292,6 +2293,26 @@ class RingAudioControllerTest {
         override fun start(vibrate: Boolean) {
             startCount++
             lastVibrate = vibrate
+        }
+
+        override fun stop() {
+            stopCount++
+        }
+    }
+
+    /**
+     * 一个 start() 必定抛异常的播放器。
+     *
+     * 用来钉住"失败的 start 不许留下关不掉的铃声"这条不变量 —— FakePlayer 永远成功，
+     * 结构上根本测不到失败路径。
+     */
+    private class ThrowingPlayer : AlarmPlayer {
+        var startCount = 0
+        var stopCount = 0
+
+        override fun start(vibrate: Boolean) {
+            startCount++
+            throw SecurityException("模拟播放途中失败")
         }
 
         override fun stop() {
@@ -2376,6 +2397,17 @@ class RingAudioControllerTest {
 
         assertEquals("并发 start 也只应播放一次", 1, player.startCount)
     }
+
+    @Test
+    fun `播放器抛异常时不会留下关不掉的铃声`() {
+        val throwing = ThrowingPlayer()
+        val c = RingAudioController(throwing)
+
+        assertThrows(SecurityException::class.java) { c.start(vibrate = true) }
+
+        assertEquals("失败的 start 必须自己收尾，把播放器停掉", 1, throwing.stopCount)
+        assertFalse("失败的 start 之后不能还声称在响铃", c.isRinging)
+    }
 }
 ```
 
@@ -2439,8 +2471,18 @@ class RingAudioController(private val player: AlarmPlayer) {
     fun start(vibrate: Boolean) {
         synchronized(lock) {
             if (ringing) return
-            player.start(vibrate)
+            // 先把标志置为"响铃中"再真正播放。顺序不能反：mediaPlayer.start() 已经播出
+            // 声音之后，startVibrating() 仍可能抛异常（例如震动权限缺失）。若标志还是
+            // false，stop() 会在 `if (!ringing) return` 上提前返回，用户就关不掉这通铃声了。
             ringing = true
+            try {
+                player.start(vibrate)
+            } catch (t: Throwable) {
+                // 播放器可能已经播了一半，尽力收尾，回滚标志，再把异常原样抛出。
+                runCatching { player.stop() }
+                ringing = false
+                throw t
+            }
         }
     }
 
@@ -2481,20 +2523,30 @@ class MediaPlayerAlarmPlayer(private val context: Context) : AlarmPlayer {
         val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
 
-        mediaPlayer = MediaPlayer().apply {
-            setAudioAttributes(
+        try {
+            // 先把实例赋给字段，再调用会抛异常的 setDataSource / prepare / start。
+            // 不能写成 `mediaPlayer = MediaPlayer().apply { ... }`：apply 里任何一步抛异常，
+            // 整个赋值都会被跳过，字段停在 null，新建的 MediaPlayer 从此无人能释放，
+            // 反复失败会一直占着音频编解码器。
+            val mp = MediaPlayer()
+            mediaPlayer = mp
+            mp.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build(),
             )
-            setDataSource(context, uri)
-            isLooping = true
-            prepare()
-            start()
+            mp.setDataSource(context, uri)
+            mp.isLooping = true
+            mp.prepare()
+            mp.start()
+            if (vibrate) startVibrating()
+        } catch (t: Throwable) {
+            // 半途失败也要把已经建好的 MediaPlayer 放掉，再把异常原样抛出。
+            releasePlayer()
+            stopVibrating()
+            throw t
         }
-
-        if (vibrate) startVibrating()
     }
 
     override fun stop() {
@@ -2552,7 +2604,7 @@ class MediaPlayerAlarmPlayer(private val context: Context) : AlarmPlayer {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingAudioControllerTest" --no-daemon
 ```
 
-预期：7 个测试 PASS。
+预期：8 个测试 PASS。
 
 - [ ] **Step 5: Commit**
 

@@ -3052,10 +3052,17 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 
 @RunWith(RobolectricTestRunner::class)
 class RingNotificationTest {
+
+    // 注意：查询渠道一律走 NotificationManager 的**公开** API `manager.getNotificationChannel(id)`
+    // （API 26+），不要用 `shadowOf(manager)`。ShadowNotificationManager 里那两个
+    // getNotificationChannel 重载都是 protected，而本测试类不在 org.robolectric.shadows 包内，
+    // 所以 `shadowOf(manager).getNotificationChannel(...)` 根本编译不过：
+    //   e: RingNotificationTest.kt:33:41 Cannot access 'fun getNotificationChannel(p0: String!):
+    //      NotificationChannel!': it is protected in 'org/robolectric/shadows/ShadowNotificationManager'.
+    // 公开 API 走的是同一份 shadow 存储，语义完全一致。
 
     private lateinit var context: Context
 
@@ -3071,7 +3078,7 @@ class RingNotificationTest {
         RingNotification.ensureChannel(context)
 
         val manager = context.getSystemService(NotificationManager::class.java)
-        val channel = shadowOf(manager).getNotificationChannel(RingNotification.CHANNEL_ID)
+        val channel = manager.getNotificationChannel(RingNotification.CHANNEL_ID)
         assertNotNull("响铃渠道应当被创建", channel)
     }
 
@@ -3080,7 +3087,7 @@ class RingNotificationTest {
         RingNotification.ensureChannel(context)
 
         val manager = context.getSystemService(NotificationManager::class.java)
-        val channel = shadowOf(manager).getNotificationChannel(RingNotification.CHANNEL_ID)!!
+        val channel = manager.getNotificationChannel(RingNotification.CHANNEL_ID)!!
         assertTrue(
             "响铃通知必须能横幅提示，实际 importance=${channel.importance}",
             channel.importance >= NotificationManager.IMPORTANCE_HIGH,
@@ -3093,7 +3100,7 @@ class RingNotificationTest {
         RingNotification.ensureChannel(context)
 
         val manager = context.getSystemService(NotificationManager::class.java)
-        assertNotNull(shadowOf(manager).getNotificationChannel(RingNotification.CHANNEL_ID))
+        assertNotNull(manager.getNotificationChannel(RingNotification.CHANNEL_ID))
     }
 
     @Test

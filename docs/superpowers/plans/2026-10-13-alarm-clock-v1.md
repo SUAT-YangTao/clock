@@ -30,6 +30,9 @@
   - 全量：`./gradlew.bat test --no-daemon`（`test` 是 AGP 的聚合任务，跑 debug + release 两个变体）
   - 单个测试类：`./gradlew.bat :app:testDebugUnitTest --tests "<全限定类名>" --no-daemon`
   - **`./gradlew.bat test --tests "..."` 是不可用的**：聚合任务不认 `--tests`，会在编译前就报 `Unknown command-line option '--tests'`。本计划正文里凡是按类跑测试的地方，用的都是上面第二条。
+- **两条已知的、无害的编译告警，见到不必追查：**
+  - `ScheduledAlarm.triggerAtTime` 在本计划锁定的 Robolectric 4.14.1 里已标记 `@Deprecated`（替代品是 `triggerAtMs`）。Task 7/8 的测试代码读它，会各产生一条 `w:` 告警；它仍然可用，**不要去改**——换成 `triggerAtMs` 反而要先验证该字段在钉死版本里存在。
+  - Kotlin 编译守护进程在 Windows 上偶发 `e: The daemon has terminated unexpectedly on startup attempt #1 with error code: 0.`，Gradle 会自动重启并继续，不是测试失败。
 
 ## 与 spec 的两处刻意偏差
 
@@ -1878,6 +1881,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowAlarmManager
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
@@ -1898,7 +1902,9 @@ class AlarmSchedulerTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         alarmManager = context.getSystemService(AlarmManager::class.java)
-        shadowOf(alarmManager).setAutoSchedule(false)
+        // setAutoSchedule 是 ShadowAlarmManager 的**静态**方法，不能经由
+        // shadowOf(...) 得到的实例调用 —— 那样写编译不过。
+        ShadowAlarmManager.setAutoSchedule(false)
 
         db = Room.inMemoryDatabaseBuilder(context, AlarmDatabase::class.java)
             .allowMainThreadQueries()
@@ -2762,6 +2768,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowAlarmManager
 
 @RunWith(RobolectricTestRunner::class)
 class SnoozeManagerTest {
@@ -2777,7 +2784,8 @@ class SnoozeManagerTest {
         context = ApplicationProvider.getApplicationContext()
         snoozeManager = SnoozeManager(context)
         alarmManager = context.getSystemService(AlarmManager::class.java)
-        shadowOf(alarmManager).setAutoSchedule(false)
+        // 静态方法，不能经由 shadowOf(...) 的实例调用。
+        ShadowAlarmManager.setAutoSchedule(false)
     }
 
     @Test
@@ -3593,6 +3601,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowAlarmManager
 
 @RunWith(RobolectricTestRunner::class)
 class AlarmReceiverTest {
@@ -3613,7 +3622,8 @@ class AlarmReceiverTest {
         // AppGraph 与 AlarmDatabase 都是进程级单例，Robolectric 不会替我们重置。
         AppGraph.resetForTesting()
         repository = AppGraph.repository(context)
-        shadowOf(context.getSystemService(AlarmManager::class.java)).setAutoSchedule(false)
+        // 静态方法，不能经由 shadowOf(...) 的实例调用。
+        ShadowAlarmManager.setAutoSchedule(false)
     }
 
     /** 建一个闹钟并返回它的 id。 */
@@ -3742,6 +3752,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowAlarmManager
 
 @RunWith(RobolectricTestRunner::class)
 class SystemEventReceiverTest {
@@ -3757,7 +3768,8 @@ class SystemEventReceiverTest {
                 Alarm(hour = 7, minute = 0, repeatDays = RepeatDays(RepeatDays.EVERY_DAY_MASK)),
             )
         }
-        shadowOf(context.getSystemService(AlarmManager::class.java)).setAutoSchedule(false)
+        // 静态方法，不能经由 shadowOf(...) 的实例调用。
+        ShadowAlarmManager.setAutoSchedule(false)
     }
 
     private fun hasScheduledAlarm(): Boolean =
@@ -3775,7 +3787,7 @@ class SystemEventReceiverTest {
     @Test
     fun `全部系统事件都会触发重算`() {
         for (action in reschedulingActions) {
-            shadowOf(context.getSystemService(AlarmManager::class.java)).setAutoSchedule(false)
+            ShadowAlarmManager.setAutoSchedule(false)
 
             SystemEventReceiver().onReceive(context, Intent(action))
 

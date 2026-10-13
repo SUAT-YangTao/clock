@@ -3665,6 +3665,7 @@ git commit -m "feat(ui): 新增全屏响铃界面与降级播放路径"
 - Modify: `app/src/main/java/com/example/clock/alarm/AlarmReceiver.kt`（替换 Task 7 的占位实现）
 - Create: `app/src/main/java/com/example/clock/alarm/SystemEventReceiver.kt`
 - Modify: `app/src/main/AndroidManifest.xml`
+- Modify: `app/src/main/java/com/example/clock/alarm/RingNotification.kt`（全屏 Intent 补 `FLAG_ACTIVITY_NEW_TASK`，见 Step 7 末）
 - Test: `app/src/test/java/com/example/clock/alarm/AlarmReceiverTest.kt`
 - Test: `app/src/test/java/com/example/clock/alarm/SystemEventReceiverTest.kt`
 
@@ -4155,6 +4156,47 @@ class SystemEventReceiver : BroadcastReceiver() {
 ```
 
 > `android:showOnLockScreen` 与 `android:showWhenLocked` 都写上：前者被部分旧 ROM 使用，后者是官方属性，两者并存无害。
+
+**同一步收尾：给 `RingNotification.ringActivityIntent()` 的全屏 Intent 补 `FLAG_ACTIVITY_NEW_TASK`。**
+
+上面 manifest 把 `RingActivity` 声明为 `launchMode="singleTask"` + `taskAffinity=""`，含义是
+"这个界面独占自己的任务栈"。但 `RingNotification` 里那个全屏 Intent 没带配套的 flag：
+
+`app/src/main/java/com/example/clock/alarm/RingNotification.kt`
+
+```kotlin
+    private fun ringActivityIntent(
+        context: Context,
+        ringing: RingingAlarm,
+    ): PendingIntent {
+        val intent = Intent(RingService.ACTION_SHOW_RING_UI).apply {
+            setPackage(context.packageName)
+            // 全屏 Intent 由系统在非 Activity 的上下文里启动，而且这里是**隐式** Intent
+            // （靠上面的 action 解析到 RingActivity）。上面 manifest 已把 RingActivity
+            // 声明为 singleTask + taskAffinity=""，补 NEW_TASK 让这个 Intent 与那个声明一致。
+            // 代价不对称：若本不需要，singleTask Activity 上的 NEW_TASK 不改变任何行为；
+            // 若需要而没加，全屏响铃会静默退化成一条普通通知。
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ringing.writeTo(this)
+        }
+        return PendingIntent.getActivity(
+            context,
+            ringing.id.toInt(),
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+```
+
+> 这是**跨任务的修正，不是 Task 13 的疏漏**：`RingNotification.kt` 属于 Task 11，该文件已按计划写完
+> 并通过评审。补这个 flag 是因为它必须与**本步**写下的 `singleTask` / `taskAffinity=""` 配套 ——
+> 两处说的必须是同一件事，而把 manifest 写全的正是本步。
+>
+> 与 Task 12 的区别：Task 12 的 `RingActivity.start()` 缺 NEW_TASK 是**确定的崩溃**
+> （裸 `Context.startActivity` 在 `targetSdk >= N` 且无 flag 时抛 `AndroidRuntimeException`，
+> 有公开文档），已修。这一处走的是系统投递 `PendingIntent` 的内部路径，**是否命中同一个检查
+> 无法在没有真机的情况下证实** —— 所以这里按"代价不对称"而非"确定缺陷"来修。
+> 若将来在真机上确认不需要，删掉这一行即可，不会留下其他痕迹。
 
 - [ ] **Step 8: 补上 launcher 图标资源**
 

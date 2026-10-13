@@ -2721,7 +2721,7 @@ data class RingingAlarm(
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingingAlarmTest" --no-daemon
 ```
 
-预期：8 个测试 PASS。
+预期：7 个测试 PASS。
 
 - [ ] **Step 5: Commit**
 

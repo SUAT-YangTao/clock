@@ -26,7 +26,10 @@
 - `PendingIntent` 的 `requestCode` = `alarm.id.toInt()`（贪睡用 `SNOOZE_REQUEST_OFFSET + id`），且 `Intent` 必须设置唯一的 `data` URI。
 - `AlarmScheduler.scheduleAll()` 有且仅有 6 个调用时机：开机、应用更新、改时间、改时区、闹钟增删改、闹钟响铃后。
 - 界面文案全部用中文。
-- 每个任务结束时必须 `./gradlew test` 全绿再提交。
+- 每个任务结束时必须跑测试并全绿再提交。两条命令都验证过可用，不要互相替换：
+  - 全量：`./gradlew.bat test --no-daemon`（`test` 是 AGP 的聚合任务，跑 debug + release 两个变体）
+  - 单个测试类：`./gradlew.bat :app:testDebugUnitTest --tests "<全限定类名>" --no-daemon`
+  - **`./gradlew.bat test --tests "..."` 是不可用的**：聚合任务不认 `--tests`，会在编译前就报 `Unknown command-line option '--tests'`。本计划正文里凡是按类跑测试的地方，用的都是上面第二条。
 
 ## 与 spec 的两处刻意偏差
 
@@ -635,7 +638,7 @@ class RepeatDaysTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.domain.RepeatDaysTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.RepeatDaysTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: RepeatDays`。
@@ -714,7 +717,7 @@ private fun shortName(day: DayOfWeek): String = when (day) {
 - [ ] **Step 4: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.domain.RepeatDaysTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.RepeatDaysTest" --no-daemon
 ```
 
 预期：全部 10 个测试 PASS。
@@ -908,7 +911,7 @@ class NextTriggerTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.domain.NextTriggerTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.NextTriggerTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: NextTrigger`。
@@ -974,7 +977,7 @@ object NextTrigger {
 - [ ] **Step 4: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.domain.NextTriggerTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.NextTriggerTest" --no-daemon
 ```
 
 预期：全部 18 个测试 PASS。
@@ -1113,7 +1116,7 @@ class NextAlarmTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.domain.NextAlarmTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.NextAlarmTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: Alarm`。
@@ -1190,7 +1193,7 @@ data class Alarm(
 - [ ] **Step 5: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.domain.NextAlarmTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.domain.NextAlarmTest" --no-daemon
 ```
 
 预期：全部 PASS。
@@ -1293,7 +1296,7 @@ class AlarmMappingTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.data.AlarmMappingTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.data.AlarmMappingTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: AlarmEntity`。
@@ -1352,7 +1355,7 @@ fun Alarm.toEntity(): AlarmEntity = AlarmEntity(
 - [ ] **Step 4: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.data.AlarmMappingTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.data.AlarmMappingTest" --no-daemon
 ```
 
 预期：5 个测试 PASS。
@@ -1570,7 +1573,7 @@ class AlarmRepositoryTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.data.AlarmRepositoryTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.data.AlarmRepositoryTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: AlarmDatabase`。
@@ -1806,7 +1809,7 @@ object AppGraph {
 - [ ] **Step 7: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.data.AlarmRepositoryTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.data.AlarmRepositoryTest" --no-daemon
 ```
 
 预期：13 个测试 PASS。
@@ -2009,7 +2012,7 @@ class AlarmSchedulerTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.AlarmSchedulerTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.AlarmSchedulerTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: AlarmScheduler`。
@@ -2223,7 +2226,7 @@ object AppGraph {
 - [ ] **Step 6: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.AlarmSchedulerTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.AlarmSchedulerTest" --no-daemon
 ```
 
 预期：7 个测试 PASS。
@@ -2373,7 +2376,7 @@ class RingAudioControllerTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.RingAudioControllerTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingAudioControllerTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: AlarmPlayer`。
@@ -2540,7 +2543,7 @@ class MediaPlayerAlarmPlayer(private val context: Context) : AlarmPlayer {
 - [ ] **Step 4: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.RingAudioControllerTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingAudioControllerTest" --no-daemon
 ```
 
 预期：7 个测试 PASS。
@@ -2653,7 +2656,7 @@ class RingingAlarmTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.RingingAlarmTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingingAlarmTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: RingingAlarm`。
@@ -2715,7 +2718,7 @@ data class RingingAlarm(
 - [ ] **Step 4: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.RingingAlarmTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingingAlarmTest" --no-daemon
 ```
 
 预期：8 个测试 PASS。
@@ -2837,7 +2840,7 @@ class SnoozeManagerTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.SnoozeManagerTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.SnoozeManagerTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: SnoozeManager`。
@@ -2936,7 +2939,7 @@ class SnoozeManager(private val context: Context) {
 - [ ] **Step 4: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.SnoozeManagerTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.SnoozeManagerTest" --no-daemon
 ```
 
 预期：6 个测试 PASS。
@@ -3080,7 +3083,7 @@ class RingNotificationTest {
 - [ ] **Step 2: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.RingNotificationTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingNotificationTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: RingNotification`。
@@ -3297,7 +3300,7 @@ class RingService : Service() {
 - [ ] **Step 5: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.RingNotificationTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingNotificationTest" --no-daemon
 ```
 
 预期：8 个测试 PASS。
@@ -3806,7 +3809,7 @@ class SystemEventReceiverTest {
 - [ ] **Step 4: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.AlarmReceiverTest" --tests "com.example.clock.alarm.SystemEventReceiverTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.AlarmReceiverTest" --tests "com.example.clock.alarm.SystemEventReceiverTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: SystemEventReceiver`（`AlarmReceiver` 此刻还是空占位，相关断言会失败）。
@@ -4092,7 +4095,7 @@ class SystemEventReceiver : BroadcastReceiver() {
 - [ ] **Step 9: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.alarm.AlarmReceiverTest" --tests "com.example.clock.alarm.SystemEventReceiverTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.AlarmReceiverTest" --tests "com.example.clock.alarm.SystemEventReceiverTest" --no-daemon
 ```
 
 预期：全部 PASS。
@@ -4253,7 +4256,7 @@ fun AlarmEditScreen(
 - [ ] **Step 3: 运行测试确认失败**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.ui.NotificationPermissionTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.ui.NotificationPermissionTest" --no-daemon
 ```
 
 预期：编译失败，`Unresolved reference: shouldRequestNotificationPermission`。
@@ -4436,7 +4439,7 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 7: 运行测试确认通过**
 
 ```powershell
-.\gradlew.bat test --tests "com.example.clock.ui.NotificationPermissionTest" --no-daemon
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.ui.NotificationPermissionTest" --no-daemon
 ```
 
 预期：5 个测试 PASS。

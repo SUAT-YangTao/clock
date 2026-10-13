@@ -169,6 +169,10 @@ captures/
 .cxx/
 *.apk
 *.aab
+
+# 隔离工作树与 SDD 工作区（见 using-git-worktrees）
+.worktrees/
+.superpowers/
 ```
 
 - [ ] **Step 6: 写 `gradle/libs.versions.toml`**
@@ -1376,7 +1380,7 @@ git commit -m "feat(data): 新增 AlarmEntity 与领域模型双向映射"
 - Produces:
   - `interface AlarmDao` 方法：`observeAll(): Flow<List<AlarmEntity>>`、`getAll(): List<AlarmEntity>`（suspend）、`getEnabled(): List<AlarmEntity>`（suspend）、`getById(id: Long): AlarmEntity?`（suspend）、`insert(entity): Long`（suspend）、`update(entity)`（suspend）、`deleteById(id: Long)`（suspend）
   - `abstract class AlarmDatabase : RoomDatabase`，`AlarmDatabase.get(context): AlarmDatabase`，`fun alarmDao(): AlarmDao`
-  - `class AlarmRepository(dao: AlarmDao, onAlarmsChanged: suspend () -> Unit)`，方法：`observeAll(): Flow<List<Alarm>>`、`getAll(): List<Alarm>`（suspend）、`getEnabled(): List<Alarm>`（suspend）、`getById(id): Alarm?`（suspend）、`save(alarm): Long`（suspend）、`delete(id)`（suspend）、`setEnabled(id, enabled)`（suspend）、`disableSilently(id)`（suspend）
+  - `class AlarmRepository(dao: AlarmDao, onAlarmsChanged: suspend (removedId: Long?) -> Unit)`，方法：`observeAll(): Flow<List<Alarm>>`、`getAll(): List<Alarm>`（suspend）、`getEnabled(): List<Alarm>`（suspend）、`getById(id): Alarm?`（suspend）、`save(alarm): Long`（suspend）、`delete(id)`（suspend）、`setEnabled(id, enabled)`（suspend）、`disableSilently(id)`（suspend）
   - `object AppGraph`：`fun repository(context: Context): AlarmRepository`、`fun scheduler(context: Context): AlarmScheduler`
 
 > `AppGraph.scheduler` 在 Task 7 才会存在。本步先只写 `repository`，`scheduler` 留在 Task 7 追加。
@@ -2249,7 +2253,7 @@ git commit -m "feat(alarm): 新增 AlarmScheduler，统一重算入口"
 **Interfaces:**
 - Consumes: 无
 - Produces:
-  - `interface AlarmPlayer { fun start(vibrate: Boolean); fun stop(); val isPlaying: Boolean }`
+  - `interface AlarmPlayer { fun start(vibrate: Boolean); fun stop() }`
   - `class RingAudioController(player: AlarmPlayer)`：`fun start(vibrate: Boolean)`、`fun stop()`、`val isRinging: Boolean`
   - `RingAudioController.Companion.get(context: Context): RingAudioController`
   - `class MediaPlayerAlarmPlayer(context: Context) : AlarmPlayer`
@@ -2562,7 +2566,6 @@ git commit -m "feat(alarm): 新增 RingAudioController，保证铃声播放幂�
   - `data class RingingAlarm(id: Long, hour: Int, minute: Int, label: String, vibrate: Boolean)`
   - `fun RingingAlarm.writeTo(intent: Intent)`
   - `RingingAlarm.Companion.from(intent: Intent): RingingAlarm?`（缺失或非法时返回 null）
-  - `RingingAlarm.Companion.from(alarm: Alarm): RingingAlarm`
 
 > 把展示数据随 PendingIntent 一起带过来，而不是到点时查数据库，是为了让 `AlarmReceiver` 能在**任何数据库操作之前**就把界面拉起来 —— 响铃的延迟越短越好。
 
@@ -2575,8 +2578,6 @@ package com.example.clock.alarm
 
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
-import com.example.clock.domain.Alarm
-import com.example.clock.domain.RepeatDays
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -2628,15 +2629,6 @@ class RingingAlarmTest {
     }
 
     @Test
-    fun `由 Alarm 构造`() {
-        val alarm = Alarm(id = 9L, hour = 21, minute = 5, label = "吃药", vibrate = false)
-        assertEquals(
-            RingingAlarm(id = 9L, hour = 21, minute = 5, label = "吃药", vibrate = false),
-            RingingAlarm.from(alarm),
-        )
-    }
-
-    @Test
     fun `空标签也能往返`() {
         val original = RingingAlarm(id = 1L, hour = 6, minute = 0, label = "", vibrate = true)
         val intent = emptyIntent()
@@ -2674,7 +2666,6 @@ class RingingAlarmTest {
 package com.example.clock.alarm
 
 import android.content.Intent
-import com.example.clock.domain.Alarm
 
 /**
  * 一次响铃所需的全部展示数据。
@@ -2717,13 +2708,6 @@ data class RingingAlarm(
             )
         }
 
-        fun from(alarm: Alarm): RingingAlarm = RingingAlarm(
-            id = alarm.id,
-            hour = alarm.hour,
-            minute = alarm.minute,
-            label = alarm.label,
-            vibrate = alarm.vibrate,
-        )
     }
 }
 ```
@@ -2978,6 +2962,7 @@ git commit -m "feat(alarm): 新增 SnoozeManager，贪睡不落库"
 - Produces:
   - `object RingNotification`：`const val CHANNEL_ID = "alarm_ringing"`、`const val NOTIFICATION_ID = 1001`、`fun ensureChannel(context: Context)`、`fun build(context: Context, ringing: RingingAlarm): Notification`
   - `class RingService : Service`，`RingService.Companion.intent(context: Context, ringing: RingingAlarm): Intent`
+  - `RingService.Companion.start(context: Context, ringing: RingingAlarm)` —— 内部用 `ContextCompat.startForegroundService`，且**不吞异常**：调用方（Task 13 的 `AlarmReceiver`）需要知道失败才能走降级路径。Task 13 的 `serviceStarter` 默认值就是 `RingService::start`。
 
 - [ ] **Step 1: 写失败的测试**
 

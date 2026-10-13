@@ -3799,6 +3799,16 @@ class AlarmReceiverTest {
     fun `响铃后会重新注册重复闹钟的下一次`() {
         val id = seedAlarm(RepeatDays.EVERY_DAY_MASK)
 
+        // 收割掉播种时那次注册（save 会经由 AppGraph 的回调注册一次），让这个用例
+        // 从"没有任何注册"出发：这样响铃之后仍能看到待触发注册，就只可能是
+        // Receiver 自己重新注册的结果。不这么做，本用例即使把 scheduleAll() 删掉
+        // 也照样通过 —— 播种留下的注册会替它满足断言。
+        //
+        // 刻意放在**本用例内**而不是 @Before：隔壁 `一次性闹钟响铃后不再有待触发的闹钟`
+        // 断言的是"没有注册"，恰恰依赖播种那次注册存在，把它提到 @Before 会让那个
+        // 用例变成恒真。两个用例对前置条件的要求是相反的。
+        AppGraph.scheduler(context).cancel(id)
+
         AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true)))
 
         val alarmManager = context.getSystemService(AlarmManager::class.java)
@@ -3866,16 +3876,22 @@ import org.robolectric.shadows.ShadowAlarmManager
 class SystemEventReceiverTest {
 
     private lateinit var context: Context
+    private var seededId: Long = 0L
 
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         AppGraph.resetForTesting()
-        runBlocking {
+        seededId = runBlocking {
             AppGraph.repository(context).save(
                 Alarm(hour = 7, minute = 0, repeatDays = RepeatDays(RepeatDays.EVERY_DAY_MASK)),
             )
         }
+        // 播种本身会经由 AppGraph 的 onAlarmsChanged 回调注册一次闹钟。这里必须把它
+        // 取消掉：本类的三个用例断言的都是"Receiver 有没有触发重算"，只有从
+        // "数据库里有闹钟、但没有任何注册"这个起点出发才成立。否则注册一直在，
+        // 三个用例都恒真 —— 把 SystemEventReceiver.onReceive 清空也照样通过。
+        AppGraph.scheduler(context).cancel(seededId)
         // 静态方法，不能经由 shadowOf(...) 的实例调用。
         ShadowAlarmManager.setAutoSchedule(false)
     }
@@ -3895,6 +3911,9 @@ class SystemEventReceiverTest {
     @Test
     fun `全部系统事件都会触发重算`() {
         for (action in reschedulingActions) {
+            // 每轮都退回"没有任何注册"的起点，否则第 2~4 个 action 会靠上一轮留下的
+            // 注册蒙混过关 —— 那样这个循环实际只验证了第一个 action。
+            AppGraph.scheduler(context).cancel(seededId)
             ShadowAlarmManager.setAutoSchedule(false)
 
             SystemEventReceiver().onReceive(context, Intent(action))

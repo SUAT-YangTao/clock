@@ -1,0 +1,113 @@
+package com.example.clock.ui.ring
+
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.Bundle
+import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
+import androidx.core.content.ContextCompat
+import com.example.clock.alarm.RingAudioController
+import com.example.clock.alarm.RingService
+import com.example.clock.alarm.RingingAlarm
+import com.example.clock.alarm.SnoozeManager
+import com.example.clock.ui.theme.ClockTheme
+
+/**
+ * 全屏响铃界面。独立 Activity，不参与导航图。
+ *
+ * 启动 Activity 不受"后台不能启动前台服务"那些限制，因此这是响铃链路里最可靠的
+ * 一环 —— AlarmReceiver 会最先拉起它。
+ */
+class RingActivity : ComponentActivity() {
+
+    private var ringing: RingingAlarm? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // 锁屏之上直接显示，无需解锁；同时点亮屏幕。
+        // 这两个方法是 API 27（O_MR1）才有的，而本项目 minSdk = 26：不加版本判断的话，
+        // 在一台 Android 8.0 机器上一响铃就 NoSuchMethodError 崩溃 —— 那是这个 app
+        // 最不能崩的时刻。API 26 上退回普通显示即可，不影响"闹钟一定会响"。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
+
+        val incoming = RingingAlarm.from(intent)
+        if (incoming == null) {
+            finish()
+            return
+        }
+        ringing = incoming
+
+        setContent {
+            ClockTheme {
+                // 返回键不关闭响铃：半睡半醒时误触返回键等于把闹钟静音了。
+                BackHandler(enabled = true) { /* 刻意留空 */ }
+
+                RingScreen(
+                    ringing = incoming,
+                    onSnooze = ::snooze,
+                    onDismiss = ::dismiss,
+                )
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        RingingAlarm.from(intent)?.let { ringing = it }
+    }
+
+    /**
+     * 铃声音频的降级入口。
+     *
+     * 正常情况下 RingService 已经开始了播放，这里是一次空操作；若前台服务被系统
+     * 拒绝启动（见 spec 5.6），这里就是唯一的播放来源。RingAudioController 的幂等性
+     * 保证两者不会叠音。
+     */
+    override fun onStart() {
+        super.onStart()
+        // 这是响铃的兜底路径，也是最后一道。播放失败时不能让它把 Activity 带崩 ——
+        // 界面留着，用户还能贪睡或关闭，总好过弹一个崩溃对话框。
+        // 控制器失败时已把状态回滚为"未在响铃"，所以这里吞掉不会留下陈旧状态。
+        ringing?.let {
+            try {
+                RingAudioController.get(this).start(it.vibrate)
+            } catch (t: Throwable) {
+                Log.w(TAG, "降级播放铃声也失败了", t)
+            }
+        }
+    }
+
+    private fun snooze() {
+        ringing?.let { SnoozeManager(this).snooze(it) }
+        stopEverything()
+    }
+
+    private fun dismiss() {
+        stopEverything()
+    }
+
+    private fun stopEverything() {
+        RingAudioController.get(this).stop()
+        stopService(Intent(this, RingService::class.java))
+        finish()
+    }
+
+    companion object {
+        private const val TAG = "RingActivity"
+
+        fun start(context: Context, ringing: RingingAlarm) {
+            val intent = Intent(context, RingActivity::class.java).apply {
+                ringing.writeTo(this)
+            }
+            ContextCompat.startActivity(context, intent, null)
+        }
+    }
+}

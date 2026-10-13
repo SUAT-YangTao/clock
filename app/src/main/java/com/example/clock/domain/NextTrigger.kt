@@ -48,4 +48,40 @@ object NextTrigger {
         // 掩码非 0 时 7 天内必有解；走到这里说明前提被破坏了。
         error("无法在 ${MAX_SEARCH_DAYS + 1} 天内找到触发时刻：mask=$mask, now=$now")
     }
+
+    /** 一个闹钟及其下次触发时刻。 */
+    data class AlarmTrigger(val alarm: Alarm, val at: ZonedDateTime)
+
+    /**
+     * 在所有**已启用**的闹钟里，找出下次触发最早的那个。没有则返回 null。
+     * 供列表页顶部的"下一个闹钟"摘要使用。
+     */
+    fun nextOf(alarms: List<Alarm>, now: ZonedDateTime): AlarmTrigger? =
+        alarms.asSequence()
+            .filter { it.enabled }
+            .map { AlarmTrigger(it, next(it.hour, it.minute, it.repeatDays.mask, now)) }
+            .minByOrNull { it.at }
+
+    /**
+     * 把两个时刻之差格式化成中文文案，例如 "7 小时 12 分钟后"、"45 分钟后"。
+     *
+     * 规则：不足 1 分钟 → "不到 1 分钟"；不足 1 小时 → "N 分钟后"；
+     * 不足 1 天 → "H 小时 M 分钟后" / "H 小时后"；否则 "D 天 H 小时后" / "D 天后"。
+     */
+    fun formatRemaining(from: ZonedDateTime, to: ZonedDateTime): String {
+        val totalMinutes = java.time.Duration.between(from, to).toMinutes()
+        if (totalMinutes < 1) return "不到 1 分钟"
+
+        val days = totalMinutes / (24 * 60)
+        val hours = (totalMinutes % (24 * 60)) / 60
+        val minutes = totalMinutes % 60
+
+        return when {
+            days > 0 && hours > 0 -> "$days 天 $hours 小时后"
+            days > 0 -> "$days 天后"
+            hours > 0 && minutes > 0 -> "$hours 小时 $minutes 分钟后"
+            hours > 0 -> "$hours 小时后"
+            else -> "$minutes 分钟后"
+        }
+    }
 }

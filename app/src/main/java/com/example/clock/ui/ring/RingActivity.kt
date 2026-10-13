@@ -8,7 +8,6 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.core.content.ContextCompat
 import com.example.clock.alarm.RingAudioController
 import com.example.clock.alarm.RingService
 import com.example.clock.alarm.RingingAlarm
@@ -105,9 +104,14 @@ class RingActivity : ComponentActivity() {
 
         fun start(context: Context, ringing: RingingAlarm) {
             val intent = Intent(context, RingActivity::class.java).apply {
+                // 必须带 NEW_TASK：本方法会被 AlarmReceiver 用 receiver 的 Context 调用，
+                // 而从非 Activity 的 Context 启动 Activity 时不带这个 flag，在 targetSdk >= N
+                // 时会直接抛 AndroidRuntimeException —— 那正好是闹钟该响的那一刻。
+                // manifest 里 RingActivity 是 singleTask + taskAffinity=""，配 NEW_TASK 才是它的用法。
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 ringing.writeTo(this)
             }
-            ContextCompat.startActivity(context, intent, null)
+            context.startActivity(intent)
         }
     }
 }

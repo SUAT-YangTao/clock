@@ -2933,9 +2933,16 @@ class SnoozeManager(private val context: Context) {
     fun snooze(ringing: RingingAlarm, nowMillis: Long = System.currentTimeMillis()) {
         val triggerAt = nowMillis + SNOOZE_MINUTES * 60_000L
 
+        // FLAG_UPDATE_CURRENT 下 getBroadcast 必然返回非 null，这里的 ?: return
+        // 只是为了让可空类型收敛，不是真实的失败分支。
+        // 注意不能把 pendingIntent(ringing) 直接塞进 setAlarmClock —— 它返回
+        // PendingIntent?，而 setAlarmClock 的第二个参数在 SDK 35 的 stub 上标注了
+        // @NonNull，直接传会编译不过。
+        val pi = pendingIntent(ringing) ?: return
+
         alarmManager.setAlarmClock(
             AlarmManager.AlarmClockInfo(triggerAt, showIntent()),
-            pendingIntent(ringing),
+            pi,
         )
     }
 

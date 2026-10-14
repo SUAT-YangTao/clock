@@ -52,6 +52,9 @@ spec 的 §2.2 文件清单里列了两个文件，本计划**不创建**它们�
 5. **前台服务启动被系统拒绝时（issue 238340795，约 1/2500）出现双路铃声重叠或完全无声。** 降级路径的正确性依赖 `RingAudioController` 的幂等性。→ Task 8 用 fake player 测试幂等性，Task 17 第 11、12 条真机复核。
 6. **一次性闹钟响铃后没有自动关闭，第二天同一时间又响。** → Task 13 有 Robolectric 测试，Task 17 第 3 条真机复核。
 7. **手机处于静音/勿扰模式时闹钟不响。** 预期行为是**仍然响**（`USAGE_ALARM` 音频流在勿扰下按系统设置可能仍被抑制，需要确认实际表现并记录）。→ Task 17 第 14 条。
+8. **两个闹钟前后脚触发时，界面显示的是旧的那个、或「贪睡」贪睡了错的那个。** 响铃界面是单实例（`singleTask`），
+   第二个闹钟靠 `onNewIntent` 覆盖当前显示的内容；若这条链路漏了，用户会以为自己贪睡的是刚响的那个，
+   实际被推迟的是上一个 —— 而且**不会有任何报错**，只表现为"闹钟没响"。→ Task 17 第 17 条真机复核。
 
 ---
 
@@ -4394,6 +4397,21 @@ class NotificationPermissionTest {
 > `ContextWrapper` 也会被忽略。**正确的杠杆是
 > `shadowOf(notificationManager).setNotificationsEnabled(false)`** —— `ShadowNotificationManager`
 > 的 `@Resetter` 把该字段重置为 `true`，即默认"已启用"，这正是 `denyPermissions` 杀不掉变异的原因。
+>
+> **后续补丁（`4c81450`）—— 本节原先"不做持久化"的决定被推翻，上面那段代码块已同步为补丁后的版本。**
+>
+> 又补了 3 条持久化用例，并且**门的行为本身被改了**：`alreadyAsked` 不再用 `rememberSaveable`，
+> 改存 SharedPreferences（`notificationPermissionAsked` / `markNotificationPermissionAsked`）。
+>
+> 原先"最坏情况只是重启后多问一次"的理由是**错的**：它把**系统的**权限对话框和**我们自己的**
+> 解释对话框混为一谈。系统在两次拒绝之后确实不再弹窗（官方文档称"视为永久拒绝"），
+> 但回调**仍会以 `granted = false` 到达**（AOSP `GrantPermissionsActivity` 只把 UI 门住，
+> 预置的 `mGrantResults` 照常返回），于是 `showDeniedNotice = true` **每次冷启动都会重来一次，
+> 没有上限** —— 正是"反复骚扰"本身。第二条理由（"这段行为在 JVM 上测不了"）同样不成立：
+> SharedPreferences 在 Robolectric 下是平凡可测的。**保留此补丁是独立评审确认的结果，不是自我背书。**
+>
+> 已知未覆盖的代价：`markNotificationPermissionAsked` 在 `launch()` **之前**调用。若进程在
+> 记账落盘之后、用户应答之前被杀，用户**既不会被问、也看不到解释对话框**，只能去设置里手动开。
 > API-26 那条用例必须让"万一走到查询"时得到拒绝，只有版本判断短路才能返回 `true`。
 
 - [ ] **Step 2: 创建两个界面的最小占位**
@@ -4476,7 +4494,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -4503,17 +4520,35 @@ fun hasNotificationPermission(context: Context): Boolean =
         true
     }
 
+private const val PREFS_NAME = "notification_permission"
+private const val KEY_ASKED = "asked"
+
 /**
- * 首次进入时请求一次通知权限。
+ * 是否已经为通知权限问过用户。存在 SharedPreferences 里，而不是 Compose 状态里 ——
+ * 这个值必须跨冷启动活着，否则每次重新打开 app 都会再问一遍（见 [NotificationPermissionGate]）。
+ */
+fun notificationPermissionAsked(context: Context): Boolean =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(KEY_ASKED, false)
+
+fun markNotificationPermissionAsked(context: Context) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().putBoolean(KEY_ASKED, true).apply()
+}
+
+/**
+ * 首次进入时请求一次通知权限 —— **真的只问一次**。
  *
- * **作用范围是一次会话。** `alreadyAsked` 是 `rememberSaveable`，能扛住配置变更与
- * 带状态的进程重启，但扛不住一次全新的冷启动 —— 用户拒绝之后从桌面重新打开 app
- * 会再问一次。这是刻意的，不做持久化：系统在两次拒绝后就不再弹窗，最坏情况只是
- * 多问一次；而在一个 composable gate 里引入 SharedPreferences 读写会多出第二个
- * 真相来源，且这段行为在 JVM 上测不了，代价不划算。所以这里不承诺"永不再问"。
+ * "已经问过"记在 SharedPreferences 里（[notificationPermissionAsked] /
+ * [markNotificationPermissionAsked]），不是 `rememberSaveable`：后者只活在当前
+ * Activity 的保存态里，冷启动就归零，于是每次重新打开 app 都会再问一遍。
  *
- * 用户拒绝后改为提示一次影响：
- * 闹钟仍会响（由全屏界面负责），只是通知栏上的快捷关闭入口不可见。
+ * 这一点在 Android 13+ 上尤其要紧：用户两次拒绝之后系统不再显示对话框，**但仍会以
+ * `granted = false` 回调**。如果"问过没有"不持久化，那个解释用的对话框就会在每次
+ * 冷启动时重来一次，没有上限 —— 正是"反复骚扰"本身。
+ *
+ * 所以：拒绝之后，说明对话框只在拒绝发生的那一次会话里出现一次。之后想开启，
+ * 走「设置 → 应用 → 闹钟 → 通知」。
  *
  * 这是 Review Focus 第 4 条的落点：拒绝权限的路径必须有明确的用户可见反馈，
  * 否则用户遇到"铃声没有关闭入口"时会完全不知道为什么。
@@ -4521,8 +4556,7 @@ fun hasNotificationPermission(context: Context): Boolean =
 @Composable
 fun NotificationPermissionGate() {
     val context = LocalContext.current
-    var alreadyAsked by rememberSaveable { mutableStateOf(false) }
-    var showDeniedNotice by remember { mutableStateOf(false) }
+    var showDeniedNotice by rememberSaveable { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -4534,10 +4568,11 @@ fun NotificationPermissionGate() {
         if (shouldRequestNotificationPermission(
                 sdkInt = Build.VERSION.SDK_INT,
                 hasPermission = hasNotificationPermission(context),
-                alreadyAsked = alreadyAsked,
+                alreadyAsked = notificationPermissionAsked(context),
             )
         ) {
-            alreadyAsked = true
+            // 先记账再请求：请求进行到一半进程被杀掉，也不会重问。
+            markNotificationPermissionAsked(context)
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
@@ -4643,7 +4678,7 @@ class MainActivity : ComponentActivity() {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.ui.NotificationPermissionTest" --no-daemon
 ```
 
-预期：8 个测试 PASS（`d32815c` 在 5 条纯函数用例之外补了 3 条 Robolectric 用例）。
+预期：11 个测试 PASS（`d32815c` 在 5 条纯函数用例之外补了 3 条 Robolectric 用例；`4c81450` 又补了 3 条持久化用例，见上方实战补充）。
 
 - [ ] **Step 8: 构建确认通过**
 
@@ -4803,7 +4838,8 @@ import java.time.ZonedDateTime
 class AlarmListSummaryTest {
 
     // 固定为周一 22:00（+08:00），让"下一个"的期望值完全确定。
-    private val now = ZonedDateTime.parse("2026-10-13T22:00:00+08:00")
+    // 2026-10-12 是周一（写成 10-13 就跟下一行的"周二"期望对不上了）。
+    private val now = ZonedDateTime.parse("2026-10-12T22:00:00+08:00")
 
     private fun summaryOf(vararg alarms: Alarm) = buildNextSummary(alarms.toList(), now)
 
@@ -5565,6 +5601,9 @@ git commit -m "feat(ui): 新增闹钟编辑界面"
 - [ ] 14. 手机静音/勿扰模式下 → 记录实际表现（预期仍然响）
 - [ ] 15. 列表里左滑删掉一个**已启用的**闹钟 → 弹「已删除…撤销」→ 点撤销 → 闹钟回到原位、开关仍是开启，且到点**仍然会响**（验证 `save()` 保留了原 id，注册也被重新排上）
 - [ ] 16. 关掉所有闹钟的开关 → 顶部摘要显示「没有启用的闹钟」
+- [ ] 17. **两个闹钟前后脚响**：建两个只差 1 分钟的闹钟（A 先响、B 后响），A 响时**不点关闭**，
+      等 B 触发 → 全屏界面显示的必须是 **B** 的时间，点「贪睡」贪睡的也必须是 **B**
+      （不能显示 A、也不能把 A 贪睡掉）。也可以按 Home 把 A 的响铃界面切到后台，再等 B 触发。
 
 ## 已知风险
 
@@ -5583,7 +5622,7 @@ git commit -m "feat(ui): 新增闹钟编辑界面"
 
 - [ ] **Step 4: 逐条执行回归清单**
 
-按 README 中的 14 条逐条在真机上验证，把不符合预期的条目记下来。
+按 README 中的 17 条逐条在真机上验证，把不符合预期的条目记下来。
 
 **第 8 条请务必执行**：设一个 30 分钟后的闹钟，熄屏放一边，不要碰手机。这是唯一能验证 Doze 下可靠性的方法，也是整个 app 的核心价值所在。
 
@@ -5605,5 +5644,5 @@ git commit -m "docs: 新增 README 与真机回归清单"
 - `.\gradlew.bat test` 全绿，无需连接设备
 - `.\gradlew.bat assembleDebug` 成功
 - `app/schemas/` 下的 Room schema 已提交
-- README 中的 14 条真机回归清单全部通过（第 14 条可以只记录现象）
+- README 中的 17 条真机回归清单全部通过（第 14 条可以只记录现象）
 - `domain/` 包内 `grep -r "import android" app/src/main/java/com/example/clock/domain/` 无输出

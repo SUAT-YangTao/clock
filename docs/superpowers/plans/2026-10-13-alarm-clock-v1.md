@@ -4381,6 +4381,21 @@ class NotificationPermissionTest {
 }
 ```
 
+> **实战补充（`d32815c`，修复轮 1）—— 补了 3 个 Robolectric 用例，并踩到一个必须记住的坑。**
+>
+> 上面的 5 条只覆盖纯函数 `shouldRequestNotificationPermission`。`hasNotificationPermission`
+> 有真实的版本分支，只有跑在对应 SDK 上才测得到，补了三条：`@Config(sdk=[26])` → `true`；
+> sdk 33 拒绝 → `false`；sdk 33 授予 → `true`。类上加 `@RunWith(RobolectricTestRunner::class)`。
+>
+> **坑：在 API < 33 上，针对 `POST_NOTIFICATIONS` 写 `checkSelfPermission` + `denyPermissions`
+> 的测试是恒真的 —— 8/8 全过，且变异下照样全过。** 原因是 androidx.core 1.15.0 对
+> `SDK_INT < 33 && permission == POST_NOTIFICATIONS` **根本不查权限**，改映射到
+> `NotificationManagerCompat.areNotificationsEnabled()`；连覆写 `checkPermission` 的自定义
+> `ContextWrapper` 也会被忽略。**正确的杠杆是
+> `shadowOf(notificationManager).setNotificationsEnabled(false)`** —— `ShadowNotificationManager`
+> 的 `@Resetter` 把该字段重置为 `true`，即默认"已启用"，这正是 `denyPermissions` 杀不掉变异的原因。
+> API-26 那条用例必须让"万一走到查询"时得到拒绝，只有版本判断短路才能返回 `true`。
+
 - [ ] **Step 2: 创建两个界面的最小占位**
 
 `app/src/main/java/com/example/clock/ui/list/AlarmListScreen.kt`（占位，Task 15 替换）
@@ -4491,7 +4506,13 @@ fun hasNotificationPermission(context: Context): Boolean =
 /**
  * 首次进入时请求一次通知权限。
  *
- * 用户拒绝后**不再重复弹窗** —— 反复骚扰只会让人直接卸载。改为提示一次影响：
+ * **作用范围是一次会话。** `alreadyAsked` 是 `rememberSaveable`，能扛住配置变更与
+ * 带状态的进程重启，但扛不住一次全新的冷启动 —— 用户拒绝之后从桌面重新打开 app
+ * 会再问一次。这是刻意的，不做持久化：系统在两次拒绝后就不再弹窗，最坏情况只是
+ * 多问一次；而在一个 composable gate 里引入 SharedPreferences 读写会多出第二个
+ * 真相来源，且这段行为在 JVM 上测不了，代价不划算。所以这里不承诺"永不再问"。
+ *
+ * 用户拒绝后改为提示一次影响：
  * 闹钟仍会响（由全屏界面负责），只是通知栏上的快捷关闭入口不可见。
  *
  * 这是 Review Focus 第 4 条的落点：拒绝权限的路径必须有明确的用户可见反馈，
@@ -4622,7 +4643,7 @@ class MainActivity : ComponentActivity() {
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.ui.NotificationPermissionTest" --no-daemon
 ```
 
-预期：5 个测试 PASS。
+预期：8 个测试 PASS（`d32815c` 在 5 条纯函数用例之外补了 3 条 Robolectric 用例）。
 
 - [ ] **Step 8: 构建确认通过**
 
@@ -4635,7 +4656,7 @@ class MainActivity : ComponentActivity() {
 - [ ] **Step 9: Commit**
 
 ```bash
-git add app/src/main/java/com/example/clock/ui/
+git add app/src/main/java/com/example/clock/ui/ app/src/test/java/com/example/clock/ui/
 git commit -m "feat(ui): 新增导航骨架与通知权限请求"
 ```
 

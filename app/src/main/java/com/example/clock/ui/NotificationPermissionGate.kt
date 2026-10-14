@@ -13,7 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -40,17 +39,35 @@ fun hasNotificationPermission(context: Context): Boolean =
         true
     }
 
+private const val PREFS_NAME = "notification_permission"
+private const val KEY_ASKED = "asked"
+
 /**
- * 首次进入时请求一次通知权限。
+ * 是否已经为通知权限问过用户。存在 SharedPreferences 里，而不是 Compose 状态里 ——
+ * 这个值必须跨冷启动活着，否则每次重新打开 app 都会再问一遍（见 [NotificationPermissionGate]）。
+ */
+fun notificationPermissionAsked(context: Context): Boolean =
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(KEY_ASKED, false)
+
+fun markNotificationPermissionAsked(context: Context) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().putBoolean(KEY_ASKED, true).apply()
+}
+
+/**
+ * 首次进入时请求一次通知权限 —— **真的只问一次**。
  *
- * **作用范围是一次会话。** `alreadyAsked` 是 `rememberSaveable`，能扛住配置变更与
- * 带状态的进程重启，但扛不住一次全新的冷启动 —— 用户拒绝之后从桌面重新打开 app
- * 会再问一次。这是刻意的，不做持久化：系统在两次拒绝后就不再弹窗，最坏情况只是
- * 多问一次；而在一个 composable gate 里引入 SharedPreferences 读写会多出第二个
- * 真相来源，且这段行为在 JVM 上测不了，代价不划算。所以这里不承诺"永不再问"。
+ * "已经问过"记在 SharedPreferences 里（[notificationPermissionAsked] /
+ * [markNotificationPermissionAsked]），不是 `rememberSaveable`：后者只活在当前
+ * Activity 的保存态里，冷启动就归零，于是每次重新打开 app 都会再问一遍。
  *
- * 用户拒绝后改为提示一次影响：闹钟仍会响（由全屏界面负责），只是通知栏上的快捷
- * 关闭入口不可见。
+ * 这一点在 Android 13+ 上尤其要紧：用户两次拒绝之后系统不再显示对话框，**但仍会以
+ * `granted = false` 回调**。如果"问过没有"不持久化，那个解释用的对话框就会在每次
+ * 冷启动时重来一次，没有上限 —— 正是"反复骚扰"本身。
+ *
+ * 所以：拒绝之后，说明对话框只在拒绝发生的那一次会话里出现一次。之后想开启，
+ * 走「设置 → 应用 → 闹钟 → 通知」。
  *
  * 这是 Review Focus 第 4 条的落点：拒绝权限的路径必须有明确的用户可见反馈，
  * 否则用户遇到"铃声没有关闭入口"时会完全不知道为什么。
@@ -58,8 +75,7 @@ fun hasNotificationPermission(context: Context): Boolean =
 @Composable
 fun NotificationPermissionGate() {
     val context = LocalContext.current
-    var alreadyAsked by rememberSaveable { mutableStateOf(false) }
-    var showDeniedNotice by remember { mutableStateOf(false) }
+    var showDeniedNotice by rememberSaveable { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -71,10 +87,11 @@ fun NotificationPermissionGate() {
         if (shouldRequestNotificationPermission(
                 sdkInt = Build.VERSION.SDK_INT,
                 hasPermission = hasNotificationPermission(context),
-                alreadyAsked = alreadyAsked,
+                alreadyAsked = notificationPermissionAsked(context),
             )
         ) {
-            alreadyAsked = true
+            // 先记账再请求：请求进行到一半进程被杀掉，也不会重问。
+            markNotificationPermissionAsked(context)
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }

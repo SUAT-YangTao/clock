@@ -3,6 +3,7 @@ package com.example.clock.ui
 import android.Manifest
 import android.app.Application
 import android.app.NotificationManager
+import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -102,5 +103,56 @@ class NotificationPermissionTest {
         shadowOf(application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
 
         assertTrue(hasNotificationPermission(application))
+    }
+
+    @Test
+    @Config(sdk = [33])
+    fun `初始状态没有记录过已经问过`() {
+        assertFalse(
+            "全新安装不应被认为是问过的",
+            notificationPermissionAsked(application),
+        )
+    }
+
+    @Test
+    @Config(sdk = [33])
+    fun `标记之后记录为已经问过`() {
+        markNotificationPermissionAsked(application)
+
+        assertTrue(
+            "标记必须真的写进持久化存储，否则冷启动会重问",
+            notificationPermissionAsked(application),
+        )
+    }
+
+    /**
+     * 门级行为：一旦"问过"被持久化，[shouldRequestNotificationPermission] 就必须返回
+     * false —— 这是"只问一次"真正生效的那一步。刻意先断言"未标记时应当请求"，
+     * 否则权限处于已授予状态时后半段会恒真。
+     */
+    @Test
+    @Config(sdk = [33])
+    fun `标记过之后 门不会再请求`() {
+        shadowOf(application).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
+
+        assertTrue(
+            "未标记时应当请求",
+            shouldRequestNotificationPermission(
+                sdkInt = Build.VERSION.SDK_INT,
+                hasPermission = hasNotificationPermission(application),
+                alreadyAsked = notificationPermissionAsked(application),
+            ),
+        )
+
+        markNotificationPermissionAsked(application)
+
+        assertFalse(
+            "标记过之后不应再请求，否则每次冷启动都会重问",
+            shouldRequestNotificationPermission(
+                sdkInt = Build.VERSION.SDK_INT,
+                hasPermission = hasNotificationPermission(application),
+                alreadyAsked = notificationPermissionAsked(application),
+            ),
+        )
     }
 }

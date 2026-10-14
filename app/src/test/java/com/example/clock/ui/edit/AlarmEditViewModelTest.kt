@@ -19,14 +19,15 @@ import org.junit.Test
 /**
  * 编辑页 ViewModel 的单元测试。
  *
- * 刻意只用 `alarmId = null`（新建模式）：`init` 只在该参数非空时才 launch，
- * 所以这些用例全程同步、不需要 Robolectric，也不需要 `runTest` ——
- * 只装一个 Main dispatcher 就够（理由见下面的 `setUp`）。
+ * 除下面那条 `alarmId 非空` 的加载用例外，其余用例都用 `alarmId = null`（新建模式）。
+ * `init` 只在 `alarmId` 非空时才 launch，而那个 `launch` 在 `setUp` 装的 Unconfined
+ * Main dispatcher 下也内联跑完，所以整类的用例全程同步、不需要 Robolectric，
+ * 也不需要 `runTest` —— 只装一个 Main dispatcher 就够（理由见下面的 `setUp`）。
  *
  * `AlarmRepository` 是 final class、没有接口，无法直接手写替身。但它的构造函数
  * 只吃一个 `AlarmDao`，而 `AlarmDao` **是**接口 —— 所以这里伪造 DAO、套一个真的
- * `AlarmRepository`，既保住了"手写替身、不引 mocking 库"，又顺带覆盖了仓储自身
- * 的 `toDomain()` 往返。不需要为了可测性改动任何生产代码。
+ * `AlarmRepository`，既保住了"手写替身、不引 mocking 库"，也不需要为了可测性
+ * 改动任何生产代码。
  *
  * 这里**不**测 `save()` 的 `id == 0` / `id != 0` 两条分支：那是 `AlarmRepository.save`
  * 的路由行为，已由 `AlarmRepositoryTest` 钉住，重复覆盖只会让两边各自僵化。
@@ -93,6 +94,33 @@ class AlarmEditViewModelTest {
         assertEquals("alarmId 为空时不应碰仓库", emptyList<String>(), dao.calls)
     }
 
+    @Test
+    fun `alarmId 非空时 init 会异步加载既有闹钟`() {
+        val dao = RecordingAlarmDao().apply {
+            seed(
+                AlarmEntity(
+                    id = 1L,
+                    hour = 5,
+                    minute = 45,
+                    label = "x",
+                    repeatMask = 0,
+                    enabled = true,
+                    vibrate = false,
+                ),
+            )
+        }
+
+        val viewModel = AlarmEditViewModel(AlarmRepository(dao) {}, alarmId = 1L)
+
+        // 编辑模式下 defaultDraft() 写的是 LocalTime.now()，所以 hour == 5 证明的是
+        // 加载结果覆盖了占位值，而不是占位值恰好也是 5 点。
+        assertEquals(1L, viewModel.draft.value?.id)
+        assertEquals(5, viewModel.draft.value?.hour)
+        assertEquals(45, viewModel.draft.value?.minute)
+        assertEquals("x", viewModel.draft.value?.label)
+        assertEquals(listOf("getById(1)"), dao.calls)
+    }
+
     private fun repository(): AlarmRepository = AlarmRepository(RecordingAlarmDao()) {}
 
     /** 手写替身：记录每一次 DAO 调用，供"不应触碰仓库"这类断言使用。 */
@@ -102,6 +130,11 @@ class AlarmEditViewModelTest {
 
         private val rows = linkedMapOf<Long, AlarmEntity>()
         private var nextId = 1L
+
+        /** 预置一行供 `init` 加载用例使用；**不**计入 [calls]。 */
+        fun seed(entity: AlarmEntity) {
+            rows[entity.id] = entity
+        }
 
         override fun observeAll(): Flow<List<AlarmEntity>> = flowOf(rows.values.toList())
 

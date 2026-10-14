@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 精确闹钟。
+         33+ 用 USE_EXACT_ALARM：闹钟类应用由系统自动授予，无需引导用户去设置页。
+         32 及以下（即 Android 12/12L）用 SCHEDULE_EXACT_ALARM：系统会自动授予，
+         但**用户可以撤销**（「设置 → 应用 → 特殊应用权限 → 闹钟和提醒」）。
+         撤销后 setAlarmClock 会抛 SecurityException；AlarmScheduler.schedule()
+         在调用前检查 canScheduleExactAlarms()，不可用时跳过并记 ERROR 日志
+         （代价是该闹钟到点不会响，所以必须留下日志，不能静默）。 -->
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 响铃界面。showWhenLocked/turnScreenOn 让它无需解锁即可显示；
+             singleTask 保证重复触发（直接启动 + 通知的 fullScreenIntent）只
+             产生一个实例，第二次走 onNewIntent。 -->
+        <activity
+            android:name=".ui.ring.RingActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showOnLockScreen="true"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:turnScreenOn="true" />
+
+        <service
+            android:name=".alarm.RingService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <receiver
+            android:name=".alarm.AlarmReceiver"
+            android:exported="false" />
+
+        <!-- exported="false" 仍能收到系统广播。这四种广播都是系统受保护广播，
+             普通应用无法伪造，因此不需要 exported="true"。 -->
+        <receiver
+            android:name=".alarm.SystemEventReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

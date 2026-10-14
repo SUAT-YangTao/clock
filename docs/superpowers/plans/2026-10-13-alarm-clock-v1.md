@@ -5152,6 +5152,19 @@ git commit -m "feat(ui): 新增闹钟列表界面与摘要逻辑测试"
 **Files:**
 - Create: `app/src/main/java/com/example/clock/ui/edit/AlarmEditViewModel.kt`
 - Modify: `app/src/main/java/com/example/clock/ui/edit/AlarmEditScreen.kt`（替换 Task 14 的占位）
+- Test: `app/src/test/java/com/example/clock/ui/edit/AlarmEditViewModelTest.kt`
+
+> **实战补充（评审回写）**：测试文件最初被漏掉 —— 当时的理由是“给 ViewModel 写测试需要协程测试设施”，
+> 而 `libs.kotlinx.coroutines.test` 其实早已在 `app/build.gradle.kts` 里（`AlarmSchedulerTest`、
+> `AlarmRepositoryTest` 都在用），且 `alarmId == null` 时 `init` 块不会 launch，待测逻辑全是同步的。
+> 该判断被评审推翻，四个测试于 `c79e250` 补上：新建模式默认草稿 7:00、`setHour` 夹取 0..23、
+> `setMinute` 夹取 0..59、`alarmId == null` 时 `delete` 不碰仓库。
+> 定向复审又指出这四个**全部**只走 `alarmId == null`，异步 `init` 读取路径（`alarmId != null`）
+> 覆盖率为零 —— 第五个测试于 `59dd171` 补上：预置一行真值 → 断言草稿被真值覆盖、且仓储确被查询过一次。
+> 该用例把 `id` 断言放在最前，因为编辑模式下占位草稿的 `id` 恒为 `0L`（只有 `hour`/`minute` 取
+> `LocalTime.now()`），所以它不依赖运行时刻、也不会假绿。
+>
+> **不要**再为“`getById` 返回 null”补用例 —— 那会把一个当前不可达的空守卫固化成“预期行为”。
 
 **Interfaces:**
 - Consumes: `AlarmRepository`（Task 6）、`RepeatDays`（Task 2）、`Alarm`（Task 4）
@@ -5186,7 +5199,7 @@ class AlarmEditViewModel(
     private val alarmId: Long?,
 ) : ViewModel() {
 
-    private val _draft = MutableStateFlow(defaultDraft())
+    private val _draft = MutableStateFlow<Alarm?>(defaultDraft())
     val draft: StateFlow<Alarm?> = _draft.asStateFlow()
 
     init {
@@ -5266,15 +5279,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -5347,14 +5359,12 @@ fun AlarmEditScreen(
                 title = { Text(if (alarmId == null) "新建闹钟" else "编辑闹钟") },
                 navigationIcon = {
                     IconButton(onClick = onDone) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
-                    if (alarmId != null) {
-                        IconButton(onClick = { showDeleteConfirm = true }) {
-                            Icon(Icons.Filled.Delete, contentDescription = "删除")
-                        }
+                    TextButton(onClick = { viewModel.save(onSaved = onDone) }) {
+                        Text("保存")
                     }
                 },
             )
@@ -5454,13 +5464,15 @@ fun AlarmEditScreen(
 
             Spacer(Modifier.height(32.dp))
 
-            Button(
-                onClick = { viewModel.save(onSaved = onDone) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-            ) {
-                Text("保存")
+            if (alarmId != null) {
+                OutlinedButton(
+                    onClick = { showDeleteConfirm = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                ) {
+                    Text("删除闹钟")
+                }
             }
         }
     }
@@ -5513,7 +5525,7 @@ private fun shortName(day: DayOfWeek): String = when (day) {
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/main/java/com/example/clock/ui/edit/
+git add app/src/main/java/com/example/clock/ui/edit/ app/src/test/java/com/example/clock/ui/edit/
 git commit -m "feat(ui): 新增闹钟编辑界面"
 ```
 

@@ -1,5 +1,6 @@
 package com.example.clock.alarm
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
@@ -98,6 +99,15 @@ class RingNotificationTest {
         val notification = RingNotification.build(context, ringing)
 
         assertNotNull("必须设置 fullScreenIntent", notification.fullScreenIntent)
+    }
+
+    @Test
+    fun `通知指向的类名是一个真实存在的 Activity`() {
+        // 这个类名是手写的字符串（alarm 层不能 import ui 层）。改名 RingActivity 时
+        // 编译与测试都不会有任何反应，只有通知点击在真机上静默失效 —— 这条把那个
+        // 静默失效变成红灯。
+        val clazz = Class.forName(RingNotification.RING_ACTIVITY_CLASS)
+        assertTrue(Activity::class.java.isAssignableFrom(clazz))
     }
 
     @Test

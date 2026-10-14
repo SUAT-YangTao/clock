@@ -30,7 +30,7 @@ object RingNotification {
      * （唯一的分层例外是 AlarmReceiver → RingActivity，那是启动 Activity 的
      * 显式 Intent，理由不同）。
      */
-    private const val RING_ACTIVITY_CLASS = "com.example.clock.ui.ring.RingActivity"
+    internal const val RING_ACTIVITY_CLASS = "com.example.clock.ui.ring.RingActivity"
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return

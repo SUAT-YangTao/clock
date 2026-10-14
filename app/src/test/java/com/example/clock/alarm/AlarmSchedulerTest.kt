@@ -170,9 +170,7 @@ class AlarmSchedulerTest {
         repository.save(Alarm(hour = 7, minute = 0))
 
         // 第 1 次权限检查就抛异常，之后恒真：钉的是"处理第 N 个闹钟时抛出的异常，
-        // 不会阻止第 N+1 个被注册"。getEnabled() 没有 ORDER BY，SQLite 按 rowid
-        // （插入顺序）返回，所以先被处理的是先插入的 9:00；它失败后，后插入的
-        // 7:00 仍被注册 —— 断言恰好 1 个且是 7:00，正是这个意思。
+        // 不会阻止第 N+1 个被注册"。
         var calls = 0
         scheduler = AlarmScheduler(context, repository, canScheduleExactAlarms = {
             calls++
@@ -183,10 +181,9 @@ class AlarmSchedulerTest {
         scheduler.scheduleAll(mondayMorning)
 
         assertEquals(1, shadowOf(alarmManager).scheduledAlarms.size)
-        val scheduled = shadowOf(alarmManager).peekNextScheduledAlarm()
-        assertEquals(
-            NextTrigger.next(7, 0, RepeatDays.NONE_MASK, mondayMorning).toInstant().toEpochMilli(),
-            scheduled!!.triggerAtTime,
-        )
+        // 第 1 次调用失败后，第 2 个闹钟仍要被处理到 —— 计数为 2 正是"循环没有中断"。
+        // 断言计数而不是断言"剩下的是哪一个"：getEnabled() 没有 ORDER BY，
+        // 依赖返回顺序的断言会在将来某次合法的 ORDER BY 上为毫无行为理由地变红。
+        assertEquals("第 1 个闹钟失败后，循环必须继续处理第 2 个", 2, calls)
     }
 }

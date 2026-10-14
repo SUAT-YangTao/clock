@@ -22,7 +22,10 @@ object AppGraph {
     fun repository(context: Context): AlarmRepository =
         repositoryRef ?: synchronized(this) {
             repositoryRef ?: AlarmRepository(
-                dao = AlarmDatabase.get(context).alarmDao(),
+                // 用 applicationContext：repositoryRef 活到进程结束，若钉住调用方
+                // （第一个调用方是 LocalContext.current，即 Activity）就等于泄漏一个
+                // Activity。同文件的 scheduler() 早就用的是 applicationContext。
+                dao = AlarmDatabase.get(context.applicationContext).alarmDao(),
                 onAlarmsChanged = { removedId ->
                     // 删除时先把 id 交给调度器。跳掉这一步，被删闹钟的注册就再也
                     // 取消不掉，会在原定时间照常响 —— 见 AlarmRepository.delete。

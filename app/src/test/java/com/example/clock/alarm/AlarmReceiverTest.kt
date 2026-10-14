@@ -38,6 +38,11 @@ class AlarmReceiverTest {
         context = ApplicationProvider.getApplicationContext()
         // AppGraph 与 AlarmDatabase 都是进程级单例，Robolectric 不会替我们重置。
         AppGraph.resetForTesting()
+        // 本类经由 AppGraph 间接构造 AlarmScheduler —— 那里没有注入缝隙，走的是
+        // 读系统的默认 lambda。Robolectric 的 ShadowAlarmManager 默认报告"精确闹钟
+        // 权限不可用"，会让 AlarmScheduler.schedule() 直接跳过注册，于是这里对重算的
+        // 断言全部落空。显式打开该权限，模拟真机上权限正常的日常状态。
+        ShadowAlarmManager.setCanScheduleExactAlarms(true)
         repository = AppGraph.repository(context)
         // 静态方法，不能经由 shadowOf(...) 的实例调用。
         ShadowAlarmManager.setAutoSchedule(false)
@@ -52,7 +57,7 @@ class AlarmReceiverTest {
     fun `一次性闹钟响铃后自动关闭`() {
         val id = seedAlarm(RepeatDays.NONE_MASK)
 
-        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true)))
+        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true, RepeatDays.NONE)))
 
         val after = runBlocking { repository.getById(id) }
         assertNotNull(after)
@@ -63,7 +68,7 @@ class AlarmReceiverTest {
     fun `重复闹钟响铃后保持启用`() {
         val id = seedAlarm(RepeatDays.WEEKDAYS_MASK)
 
-        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true)))
+        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true, RepeatDays.NONE)))
 
         assertTrue("重复闹钟不应被关闭", runBlocking { repository.getById(id) }!!.enabled)
     }
@@ -72,7 +77,7 @@ class AlarmReceiverTest {
     fun `贪睡触发的响铃不再关闭任何闹钟`() {
         val id = seedAlarm(RepeatDays.NONE_MASK)
 
-        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true), isSnooze = true))
+        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true, RepeatDays.NONE), isSnooze = true))
 
         assertTrue(
             "贪睡响铃不应改动闹钟",
@@ -95,7 +100,7 @@ class AlarmReceiverTest {
     @Test
     fun `action 不匹配时直接返回`() {
         val id = seedAlarm(RepeatDays.NONE_MASK)
-        val wrong = fireIntent(RingingAlarm(id, 7, 0, "x", true)).apply {
+        val wrong = fireIntent(RingingAlarm(id, 7, 0, "x", true, RepeatDays.NONE)).apply {
             action = "com.example.clock.SOMETHING_ELSE"
         }
 
@@ -118,7 +123,7 @@ class AlarmReceiverTest {
         // 用例变成恒真。两个用例对前置条件的要求是相反的。
         AppGraph.scheduler(context).cancel(id)
 
-        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true)))
+        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true, RepeatDays.NONE)))
 
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         assertNotNull(
@@ -131,7 +136,7 @@ class AlarmReceiverTest {
     fun `一次性闹钟响铃后不再有待触发的闹钟`() {
         val id = seedAlarm(RepeatDays.NONE_MASK)
 
-        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true)))
+        AlarmReceiver().onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true, RepeatDays.NONE)))
 
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         assertTrue(
@@ -148,7 +153,7 @@ class AlarmReceiverTest {
         val receiver = AlarmReceiver().apply {
             serviceStarter = { _, _ -> error("模拟前台服务启动被系统拒绝") }
         }
-        receiver.onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true)))
+        receiver.onReceive(context, fireIntent(RingingAlarm(id, 7, 0, "起床", true, RepeatDays.NONE)))
 
         assertFalse(
             "前台服务失败不应中断关闭一次性闹钟",

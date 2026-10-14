@@ -26,6 +26,11 @@ class SystemEventReceiverTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         AppGraph.resetForTesting()
+        // 本类经由 AppGraph 间接构造 AlarmScheduler（没有注入缝隙，走读系统的默认
+        // lambda）。Robolectric 的 ShadowAlarmManager 默认报告"精确闹钟权限不可用"，
+        // AlarmScheduler.schedule() 会因此直接跳过注册。显式打开它，否则下面
+        // "应当触发重算注册"的断言全部落空 —— 且是假失败。
+        ShadowAlarmManager.setCanScheduleExactAlarms(true)
         seededId = runBlocking {
             AppGraph.repository(context).save(
                 Alarm(hour = 7, minute = 0, repeatDays = RepeatDays(RepeatDays.EVERY_DAY_MASK)),

@@ -5,6 +5,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.util.Log
 import com.example.clock.data.AlarmRepository
 import com.example.clock.domain.Alarm
 import com.example.clock.domain.NextTrigger
@@ -22,6 +24,14 @@ import java.time.ZonedDateTime
 class AlarmScheduler(
     private val context: Context,
     private val repository: AlarmRepository,
+    /**
+     * 精确闹钟权限检查。默认读系统；测试注入它来模拟"用户撤销了权限"。
+     * 默认值只引用 context，不在构造期碰 alarmManager（那是 body 里的属性）。
+     */
+    private val canScheduleExactAlarms: () -> Boolean = {
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
+    },
 ) {
 
     private val alarmManager: AlarmManager =
@@ -32,24 +42,53 @@ class AlarmScheduler(
      *
      * 先取消全部（含已禁用的）再注册，是为了保证任何残留的旧注册都不会
      * 在用户改完设置后仍然生效。
+     *
+     * 每一步都逐闹钟隔离：任何一个闹钟抛异常都不能连累其余 ——
+     * 否则一次失败就是全线静默不响。
      */
     suspend fun scheduleAll(now: ZonedDateTime = ZonedDateTime.now()) {
-        repository.getAll().forEach { cancel(it.id) }
-        repository.getEnabled().forEach { schedule(it, now) }
+        repository.getAll().forEach { alarm ->
+            try {
+                cancel(alarm.id)
+            } catch (e: Exception) {
+                Log.e(TAG, "取消闹钟 ${alarm.id} 的旧注册失败，继续处理其余闹钟", e)
+            }
+        }
+        repository.getEnabled().forEach { alarm ->
+            try {
+                schedule(alarm, now)
+            } catch (e: Exception) {
+                // 一个闹钟注册失败不能连累其余 —— 否则一次失败就是全线静默不响。
+                Log.e(TAG, "闹钟 ${alarm.id} 注册失败，继续注册其余闹钟", e)
+            }
+        }
     }
 
     /** 为单个闹钟注册下次触发。 */
     fun schedule(alarm: Alarm, now: ZonedDateTime = ZonedDateTime.now()) {
+        if (!canScheduleExactAlarms()) {
+            // 权限被撤销（Android 12/12L 上用户可在「闹钟和提醒」里关掉）。
+            // 此时 setAlarmClock 会抛 SecurityException —— 这里跳过并记 ERROR，
+            // 而不是让它炸穿调用方。代价是这个闹钟不会响，所以必须是 ERROR。
+            Log.e(TAG, "精确闹钟权限不可用，跳过闹钟 ${alarm.id}：它到点不会响")
+            return
+        }
+
         val triggerAt = NextTrigger.next(alarm.hour, alarm.minute, alarm.repeatDays.mask, now)
 
         // FLAG_UPDATE_CURRENT 下 getBroadcast 必然返回非 null，这里的 ?: return
         // 只是为了让可空类型收敛，不是真实的失败分支。
         val pi = pendingIntent(alarm, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
 
-        alarmManager.setAlarmClock(
-            AlarmManager.AlarmClockInfo(triggerAt.toInstant().toEpochMilli(), showIntent()),
-            pi,
-        )
+        try {
+            alarmManager.setAlarmClock(
+                AlarmManager.AlarmClockInfo(triggerAt.toInstant().toEpochMilli(), showIntent()),
+                pi,
+            )
+        } catch (e: SecurityException) {
+            // 权限可能在上面的检查与这次调用之间被撤销，这层是兜底。
+            Log.e(TAG, "注册闹钟 ${alarm.id} 失败：精确闹钟权限不可用", e)
+        }
     }
 
     /** 取消某个闹钟的注册。不存在时静默返回。 */
@@ -98,6 +137,7 @@ class AlarmScheduler(
                 putExtra(EXTRA_MINUTE, it.minute)
                 putExtra(EXTRA_LABEL, it.label)
                 putExtra(EXTRA_VIBRATE, it.vibrate)
+                putExtra(EXTRA_REPEAT_MASK, it.repeatDays.mask)
             }
         }
         return PendingIntent.getBroadcast(
@@ -109,12 +149,15 @@ class AlarmScheduler(
     }
 
     companion object {
+        private const val TAG = "AlarmScheduler"
+
         const val ACTION_FIRE_ALARM = "com.example.clock.action.FIRE_ALARM"
         const val EXTRA_ALARM_ID = "extra_alarm_id"
         const val EXTRA_HOUR = "extra_hour"
         const val EXTRA_MINUTE = "extra_minute"
         const val EXTRA_LABEL = "extra_label"
         const val EXTRA_VIBRATE = "extra_vibrate"
+        const val EXTRA_REPEAT_MASK = "extra_repeat_mask"
         const val EXTRA_IS_SNOOZE = "extra_is_snooze"
 
         private const val SHOW_REQUEST_CODE = 99_999

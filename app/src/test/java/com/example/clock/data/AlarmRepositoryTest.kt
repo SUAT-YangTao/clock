@@ -87,8 +87,13 @@ class AlarmRepositoryTest {
         // 列表页"撤销删除"走的就是这条路径
         val restored = repository.save(Alarm(id = id, hour = 7, minute = 0, label = "起床"))
 
+        // 必须复原成**原 id**。原来查询用的是 restored 而不是 id：那样"坏 save 删掉
+        // 旧行、以新 id 重插"会让两条断言都通过，可撤销回来的闹钟因为旧 id 的注册
+        // 已被 delete 时的 cancel 清掉，就再也不会响 —— 这正是 id 必须钉住的原因，
+        // 也是 README 第 15 条要验证的东西。
+        assertEquals(id, restored)
         assertEquals(1, repository.getAll().size)
-        assertEquals("起床", repository.getById(restored)?.label)
+        assertEquals("起床", repository.getById(id)?.label)
     }
 
     @Test

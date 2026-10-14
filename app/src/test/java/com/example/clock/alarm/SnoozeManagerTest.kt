@@ -3,6 +3,7 @@ package com.example.clock.alarm
 import android.app.AlarmManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.clock.domain.RepeatDays
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -20,7 +21,14 @@ class SnoozeManagerTest {
     private lateinit var snoozeManager: SnoozeManager
     private lateinit var alarmManager: AlarmManager
 
-    private val ringing = RingingAlarm(id = 3L, hour = 7, minute = 0, label = "起床", vibrate = false)
+    private val ringing = RingingAlarm(
+        id = 3L,
+        hour = 7,
+        minute = 0,
+        label = "起床",
+        vibrate = false,
+        repeatDays = RepeatDays.NONE,
+    )
 
     @Before
     fun setUp() {

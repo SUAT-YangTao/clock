@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.clock.domain.RepeatDays
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -17,7 +18,14 @@ class RingNotificationTest {
 
     private lateinit var context: Context
 
-    private val ringing = RingingAlarm(id = 3L, hour = 7, minute = 30, label = "起床", vibrate = true)
+    private val ringing = RingingAlarm(
+        id = 3L,
+        hour = 7,
+        minute = 30,
+        label = "起床",
+        vibrate = true,
+        repeatDays = RepeatDays.NONE,
+    )
 
     @Before
     fun setUp() {

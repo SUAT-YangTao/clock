@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -140,8 +141,12 @@ private fun EmptyState() {
 /**
  * 左滑（从右往左）触发删除。反向滑动被禁用，避免和系统的返回手势打架。
  *
- * 删除后卡片会从列表里消失，所以不需要在处理完后重置 [state] —— 整个
- * SwipeToDismissBox 会随 item 一起被移除；撤销恢复时按 key 重建的是全新状态。
+ * 删除后卡片会从列表里消失，但 **state 不会随之消失**：LazyColumn 的
+ * LazySaveableStateHolder 会把离开组合的 item 的 saved state 记在
+ * previouslyComposedKeys 里并**保留在内存中**（唯一读它的 performSave() 同时
+ * 也是唯一调用 removeState 的地方，所以没有任何东西会剪枝）。撤销把同一个
+ * alarm.id 恢复回列表时，那一行的 swipe 状态会被还原成 EndToStart，界面呈现
+ * 为"已经划走的样子"（只剩红色删除底色）。因此下面在行重新进入组合时重置一次。
  */
 @Composable
 private fun SwipeToDeleteRow(
@@ -158,6 +163,10 @@ private fun SwipeToDeleteRow(
             }
         },
     )
+
+    // LazyColumn 的 saveable state holder 会把已移除 item 的 saved state 留在内存里，
+    // 撤销恢复同一 id 的那一行时会被还原成"已划走"。进入组合时重置一次，让它回到未划走。
+    LaunchedEffect(Unit) { state.reset() }
 
     SwipeToDismissBox(
         state = state,

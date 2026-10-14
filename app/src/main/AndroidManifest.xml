@@ -3,7 +3,11 @@
 
     <!-- 精确闹钟。
          33+ 用 USE_EXACT_ALARM：闹钟类应用由系统自动授予，无需引导用户去设置页。
-         32 及以下用 SCHEDULE_EXACT_ALARM，在 Android 12/13 上同样是自动授予的。 -->
+         32 及以下（即 Android 12/12L）用 SCHEDULE_EXACT_ALARM：系统会自动授予，
+         但**用户可以撤销**（「设置 → 应用 → 特殊应用权限 → 闹钟和提醒」）。
+         撤销后 setAlarmClock 会抛 SecurityException；AlarmScheduler.schedule()
+         在调用前检查 canScheduleExactAlarms()，不可用时跳过并记 ERROR 日志
+         （代价是该闹钟到点不会响，所以必须留下日志，不能静默）。 -->
     <uses-permission
         android:name="android.permission.SCHEDULE_EXACT_ALARM"
         android:maxSdkVersion="32" />
@@ -46,12 +50,7 @@
             android:showWhenLocked="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Material.NoActionBar"
-            android:turnScreenOn="true">
-            <intent-filter>
-                <action android:name="com.example.clock.action.SHOW_RING_UI" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
+            android:turnScreenOn="true" />
 
         <service
             android:name=".alarm.RingService"

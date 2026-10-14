@@ -78,7 +78,6 @@ class RingService : Service() {
 
         const val ACTION_STOP = "com.example.clock.action.STOP_RINGING"
         const val ACTION_SNOOZE = "com.example.clock.action.SNOOZE"
-        const val ACTION_SHOW_RING_UI = "com.example.clock.action.SHOW_RING_UI"
 
         fun intent(context: Context, ringing: RingingAlarm): Intent =
             Intent(context, RingService::class.java).apply { ringing.writeTo(this) }

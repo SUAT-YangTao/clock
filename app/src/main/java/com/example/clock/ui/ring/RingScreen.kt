@@ -65,6 +65,16 @@ fun RingScreen(
                 )
             }
 
+            // spec §6.3 明文要求展示「星期」。复用列表页同一个 summary()，措辞一致；
+            // 无条件展示（含一次性闹钟的「仅一次」）——凌晨看到它是有效信息。
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = ringing.repeatDays.summary(),
+                style = MaterialTheme.typography.bodyLarge,
+                color = onBackground.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center,
+            )
+
             Spacer(Modifier.height(64.dp))
 
             Row(

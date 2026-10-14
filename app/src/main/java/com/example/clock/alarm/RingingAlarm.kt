@@ -1,6 +1,7 @@
 package com.example.clock.alarm
 
 import android.content.Intent
+import com.example.clock.domain.RepeatDays
 
 /**
  * 一次响铃所需的全部展示数据。
@@ -13,6 +14,7 @@ data class RingingAlarm(
     val minute: Int,
     val label: String,
     val vibrate: Boolean,
+    val repeatDays: RepeatDays,
 ) {
     fun writeTo(intent: Intent) {
         intent.putExtra(AlarmScheduler.EXTRA_ALARM_ID, id)
@@ -20,6 +22,7 @@ data class RingingAlarm(
         intent.putExtra(AlarmScheduler.EXTRA_MINUTE, minute)
         intent.putExtra(AlarmScheduler.EXTRA_LABEL, label)
         intent.putExtra(AlarmScheduler.EXTRA_VIBRATE, vibrate)
+        intent.putExtra(AlarmScheduler.EXTRA_REPEAT_MASK, repeatDays.mask)
     }
 
     companion object {
@@ -40,6 +43,14 @@ data class RingingAlarm(
                 minute = minute,
                 label = intent.getStringExtra(AlarmScheduler.EXTRA_LABEL).orEmpty(),
                 vibrate = intent.getBooleanExtra(AlarmScheduler.EXTRA_VIBRATE, true),
+                // 缺这个 extra 绝不能当成"非法"：app 更新前建的 PendingIntent 可能还活着，
+                // 把它判成"不响"是这个 app 最坏的失败形态。默认值 = 仅一次。
+                repeatDays = RepeatDays(
+                    intent.getIntExtra(
+                        AlarmScheduler.EXTRA_REPEAT_MASK,
+                        RepeatDays.NONE_MASK,
+                    ),
+                ),
             )
         }
 

@@ -53,7 +53,9 @@ class AlarmSchedulerTest {
             if (removedId != null) scheduler.cancel(removedId)
             scheduler.scheduleAll()
         }
-        scheduler = AlarmScheduler(context, repository)
+        // 显式传入缝隙：Robolectric 的 ShadowAlarmManager 对 canScheduleExactAlarms()
+        // 的行为不可依赖，一旦走到默认 lambda 就可能把整个类带崩。
+        scheduler = AlarmScheduler(context, repository, canScheduleExactAlarms = { true })
     }
 
     @After
@@ -146,5 +148,45 @@ class AlarmSchedulerTest {
     fun `空列表不注册任何闹钟`() = runTest {
         scheduler.scheduleAll(mondayMorning)
         assertEquals(0, shadowOf(alarmManager).scheduledAlarms.size)
+    }
+
+    @Test
+    fun `精确闹钟权限被撤销时不抛异常也不注册`() = runTest {
+        // 模拟 Android 12/12L 上用户在「闹钟和提醒」里撤销权限：setAlarmClock
+        // 会抛 SecurityException，这里必须在调用它之前就跳过。
+        scheduler = AlarmScheduler(context, repository, canScheduleExactAlarms = { false })
+        repository.save(Alarm(hour = 7, minute = 0))
+
+        scheduler.scheduleAll(mondayMorning)   // 抛异常即测试失败
+
+        assertEquals(0, shadowOf(alarmManager).scheduledAlarms.size)
+    }
+
+    @Test
+    fun `一个闹钟注册失败不影响其余闹钟`() = runTest {
+        // 播种用的是 setUp 里那个恒真的缝隙，免得 save() 的回调提前消耗掉
+        // 下面那唯一一次"失败"。
+        repository.save(Alarm(hour = 9, minute = 0))
+        repository.save(Alarm(hour = 7, minute = 0))
+
+        // 第 1 次权限检查就抛异常，之后恒真：钉的是"处理第 N 个闹钟时抛出的异常，
+        // 不会阻止第 N+1 个被注册"。getEnabled() 没有 ORDER BY，SQLite 按 rowid
+        // （插入顺序）返回，所以先被处理的是先插入的 9:00；它失败后，后插入的
+        // 7:00 仍被注册 —— 断言恰好 1 个且是 7:00，正是这个意思。
+        var calls = 0
+        scheduler = AlarmScheduler(context, repository, canScheduleExactAlarms = {
+            calls++
+            if (calls == 1) throw IllegalStateException("模拟处理第一个闹钟时失败")
+            true
+        })
+
+        scheduler.scheduleAll(mondayMorning)
+
+        assertEquals(1, shadowOf(alarmManager).scheduledAlarms.size)
+        val scheduled = shadowOf(alarmManager).peekNextScheduledAlarm()
+        assertEquals(
+            NextTrigger.next(7, 0, RepeatDays.NONE_MASK, mondayMorning).toInstant().toEpochMilli(),
+            scheduled!!.triggerAtTime,
+        )
     }
 }

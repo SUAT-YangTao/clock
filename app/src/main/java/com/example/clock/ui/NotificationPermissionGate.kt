@@ -22,8 +22,9 @@ import androidx.core.content.ContextCompat
  * 是否需要请求通知权限。
  *
  * POST_NOTIFICATIONS 是 Android 13 引入的运行时权限，也是本 app 在目标设备
- * （Android 12/13）上唯一需要运行时请求的权限 —— 精确闹钟权限在 12/13 上是
- * 系统自动授予的。
+ * （Android 12/13）上唯一需要运行时请求的权限。精确闹钟权限虽由系统授予，
+ * 但不在本函数的职责内：Android 12/12L 上它可被用户撤销（撤销后调度器会
+ * 跳过注册并记 ERROR 日志，见 AlarmScheduler.schedule()）。
  */
 fun shouldRequestNotificationPermission(
     sdkInt: Int,

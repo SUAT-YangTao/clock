@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 /**
@@ -20,6 +22,15 @@ object RingNotification {
     const val NOTIFICATION_ID = 1001
 
     private const val CHANNEL_NAME = "闹钟响铃"
+
+    private const val TAG = "RingNotification"
+
+    /**
+     * 响铃 Activity 的类名。刻意用字符串而不是类引用：alarm 层不能 import ui 层
+     * （唯一的分层例外是 AlarmReceiver → RingActivity，那是启动 Activity 的
+     * 显式 Intent，理由不同）。
+     */
+    private const val RING_ACTIVITY_CLASS = "com.example.clock.ui.ring.RingActivity"
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -40,6 +51,16 @@ object RingNotification {
     fun build(context: Context, ringing: RingingAlarm): Notification {
         val timeText = formatTime(ringing.hour, ringing.minute)
         val bodyText = ringing.label.ifBlank { "闹钟时间到了" }
+
+        // Android 14 起全屏 Intent 是特殊权限，未授予时 setFullScreenIntent 会**静默**
+        // 退化成普通通知 —— 留一行日志，免得"响铃没弹出来"变成一个无从下手的谜。
+        // canUseFullScreenIntent() 是 API 34，minSdk 26，版本判断是必需的。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val nm = context.getSystemService(NotificationManager::class.java)
+            if (nm != null && !nm.canUseFullScreenIntent()) {
+                Log.w(TAG, "全屏 Intent 权限未授予，响铃将退化为普通通知")
+            }
+        }
 
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
@@ -70,15 +91,17 @@ object RingNotification {
     private fun formatTime(hour: Int, minute: Int): String =
         "%02d:%02d".format(hour, minute)
 
-    /** 指向全屏响铃界面。用 Intent 的 action 而非类引用，保持 alarm 层不依赖 ui 层。 */
+    /** 指向全屏响铃界面。用类名字符串而非类引用，保持 alarm 层不依赖 ui 层。 */
     private fun ringActivityIntent(
         context: Context,
         ringing: RingingAlarm,
     ): PendingIntent {
-        val intent = Intent(RingService.ACTION_SHOW_RING_UI).apply {
-            setPackage(context.packageName)
-            // 全屏 Intent 由系统在非 Activity 的上下文里启动，而且这里是**隐式** Intent
-            // （靠上面的 action 解析到 RingActivity）。上面 manifest 已把 RingActivity
+        val intent = Intent().apply {
+            // 刻意用类名字符串而不是类引用：alarm 层不能 import ui 层。
+            // 必须是显式 Intent —— 隐式 Intent 在 Android 14+ 上不匹配非导出组件，
+            // 而这既是通知点击入口，也是全屏 Intent（响铃的最后一道防线）。
+            setClassName(context.packageName, RING_ACTIVITY_CLASS)
+            // 全屏 Intent 由系统在非 Activity 的上下文里启动，manifest 已把 RingActivity
             // 声明为 singleTask + taskAffinity=""，补 NEW_TASK 让这个 Intent 与那个声明一致。
             // 代价不对称：若本不需要，singleTask Activity 上的 NEW_TASK 不改变任何行为；
             // 若需要而没加，全屏响铃会静默退化成一条普通通知。

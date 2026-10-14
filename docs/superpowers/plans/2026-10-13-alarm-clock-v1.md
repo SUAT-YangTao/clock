@@ -41,6 +41,38 @@ spec 的 §2.2 文件清单里列了两个文件，本计划**不创建**它们�
 - **`ClockApp.kt`（Application 子类）** —— spec 用它做依赖装配的入口。本计划改为在 `AppGraph` 里用 `@Volatile` + `synchronized` 的懒加载单例达到同样效果，少一个类和一条 manifest 声明。代价是 `AppGraph` 需要额外提供 `resetForTesting()` 给 Robolectric 用（见 Task 6）。
 - **`Converters.kt`（Room TypeConverter）** —— spec 设想把 `RepeatDays` 作为独立类型持久化。本计划把 `RepeatDays` 的 7 位掩码直接以 `Int` 存进实体，`RepeatDays` ↔ `Int` 的转换就是实体映射扩展函数里的一行。一个 `Int` 不需要 TypeConverter。
 
+## 执行期发现的计划缺陷（回写记录）
+
+本计划被逐任务执行时，实现者、我与最终整支评审一共发现 **12 处计划文档自身的缺陷** —— 不是在说实现走样，恰恰相反：凡是计划把错的东西写清楚了，实现就忠实地把它实现出来了。全部已按 spec 校正并**回写进下方对应任务**，下面留一份索引。
+
+**逐任务循环期间发现的 7 处**（编号沿用执行时的口语编号）：
+
+| # | 位置 | 缺陷 |
+|---|------|------|
+| 1 | Task 10 的生产代码片段 | 计划示例代码过不了 Kotlin 的类型检查（可空类型 vs 平台类型）—— 见 Task 10 的 `实战补充` |
+| 2 | Task 11 的测试代码 | `ShadowNotificationManager.getNotificationChannel()` 是 `protected`，按 brief 原样写**编译不过** |
+| 3 | Task 12 的派发前修正 | 我在派发前读接口时抓到的一处（已随 `80eab2f` 修正） |
+| 4 | Task 12 的生产代码 | 漏了 `FLAG_ACTIVITY_NEW_TASK` ⇒ API 26 上启动崩溃 |
+| 5 | Task 13 的测试代码 | `SystemEventReceiverTest` 按 brief 原样写**必然失败**（实现者偏离并上报，已核实接受） |
+| 6 | Task 13 的测试代码 | `响铃后会重新注册重复闹钟的下一次` 是**恒真测试** |
+| 7 | **Task 16 的生产代码** | `MutableStateFlow(defaultDraft())` 推断为非空，而 `update()` 要写 `Alarm?` —— **不改就编译不过**（`e: AlarmEditViewModel.kt:63:24`），已随 `796eacb` 回写 |
+
+**最终整支评审又指出 5 处**，全部在生产代码片段或计划要求的文档模板里，全部在下文回写：
+
+| # | 位置 | 缺陷 | 回写处 |
+|---|------|------|--------|
+| 8 | Task 9 + Task 12 的片段 | 漏掉「星期」：`RingingAlarm` 没有 `repeatDays` 字段，界面也就不展示 —— 而 spec §6.3 明文要求 | Task 9、Task 12 |
+| 9 | Task 7 的 `AlarmScheduler` 片段 | 漏掉 `canScheduleExactAlarms()` 检查与 `SecurityException` 处理 ⇒ 用户撤销权限后**全线静默不响** | Task 7 |
+| 10 | Task 11 的 `ringActivityIntent` 片段 | 用**隐式** Intent ⇒ Android 14+ 上不匹配非导出组件，通知点击与全屏响铃双双失效 | Task 11、Task 13 |
+| 11 | Task 17 Step 3 的 README 模板 | 漏掉 spec §8.3 明文要求写进 README 的厂商 ROM 白名单段，与本计划自己的文件表和 Step 2 自相矛盾 | Task 17 |
+| 12 | Task 7 Step 5 的 `AppGraph.repository()` 片段 | 闭包直接捕获 `context` 形参，而 `repositoryRef` 活到进程结束 ⇒ 只要有一个调用方传的是 Activity（`AlarmListScreen` 的 `LocalContext.current`），那个 Activity 就被永久钉住。修的时候还先走过一次**无效改动**（改调用点，而 `AlarmDatabase.get()` 内部本来就强制 `applicationContext`），真凶是闭包捕获的那个变量 | Task 7 |
+
+**这 12 处的分布本身就是结论：** 3 处在**计划的测试代码**里（第 2、5、6 处），9 处在**生产代码片段或文档模板**里（其余全部）。前者是**响的** —— 编译不过或直接红灯，撞上就停；后者是**不响的** —— 编译通过、测试全绿，缺陷一路走到真机才发作。第 9、10、12 三处都属后者，而它们正是这个 app 最坏的两种失败形态（闹钟静默不响；界面被泄漏的 Activity 拖住）的来源，整个 JVM 测试套件对它们**完全无感**。
+
+**这条分布差异是写计划时唯一值得记住的事：** 计划里写错的**测试代码**会自己举报自己，写错的**生产代码**不会 —— 所以生产代码片段必须写得比测试代码更慢、更实。评审值得花在片段上，而不是花在测试上。
+
+---
+
 ## Review Focus
 
 以下是 spec 隐含、但**没有任何任务的自动化测试能覆盖**的失败模式，按最可能坑到使用者的顺序排列。每一条都必须在实现时人工确认，并在 Task 17 的真机回归清单（README.md）里有对应条目。
@@ -1791,7 +1823,10 @@ object AppGraph {
         repositoryRef ?: synchronized(this) {
             repositoryRef ?: AlarmRepository(
                 dao = AlarmDatabase.get(context).alarmDao(),
-                // Task 7 会把它换成 { scheduler(context).scheduleAll() }
+                // Task 7 会把它换成 { scheduler(...).scheduleAll() }，
+                // 并在 repository() 里先取出 applicationContext 再搭闭包 ——
+                // 别照抄这里的 `context`：闭包一旦捕获 Activity，进程就再也放不掉它。
+                // 完整写法见 Task 7 Step 5。
                 onAlarmsChanged = { },
             ).also { repositoryRef = it }
         }
@@ -2059,6 +2094,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.util.Log
 import com.example.clock.data.AlarmRepository
 import com.example.clock.domain.Alarm
 import com.example.clock.domain.NextTrigger
@@ -2076,6 +2113,14 @@ import java.time.ZonedDateTime
 class AlarmScheduler(
     private val context: Context,
     private val repository: AlarmRepository,
+    /**
+     * 精确闹钟权限检查。默认读系统；测试注入它来模拟“用户撤销了权限”。
+     * 默认值只引用 context，不在构造期碰 alarmManager（那是 body 里的属性）。
+     */
+    private val canScheduleExactAlarms: () -> Boolean = {
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
+    },
 ) {
 
     private val alarmManager: AlarmManager =
@@ -2086,24 +2131,52 @@ class AlarmScheduler(
      *
      * 先取消全部（含已禁用的）再注册，是为了保证任何残留的旧注册都不会
      * 在用户改完设置后仍然生效。
+     *
+     * 每一步都逐闹钟隔离：任何一个闹钟抛异常都不能连累其余 ——
+     * 否则一次失败就是全线静默不响。
      */
     suspend fun scheduleAll(now: ZonedDateTime = ZonedDateTime.now()) {
-        repository.getAll().forEach { cancel(it.id) }
-        repository.getEnabled().forEach { schedule(it, now) }
+        repository.getAll().forEach { alarm ->
+            try {
+                cancel(alarm.id)
+            } catch (e: Exception) {
+                Log.e(TAG, "取消闹钟 ${alarm.id} 的旧注册失败，继续处理其余闹钟", e)
+            }
+        }
+        repository.getEnabled().forEach { alarm ->
+            try {
+                schedule(alarm, now)
+            } catch (e: Exception) {
+                Log.e(TAG, "注册闹钟 ${alarm.id} 失败，继续处理其余闹钟", e)
+            }
+        }
     }
 
     /** 为单个闹钟注册下次触发。 */
     fun schedule(alarm: Alarm, now: ZonedDateTime = ZonedDateTime.now()) {
+        if (!canScheduleExactAlarms()) {
+            // 权限被撤销（Android 12/12L 上用户可在「闹钟和提醒」里关掉）。
+            // 此时 setAlarmClock 会抛 SecurityException —— 这里跳过并记 ERROR，
+            // 而不是让它炸穿调用方。代价是这个闹钟不会响，所以必须是 ERROR。
+            Log.e(TAG, "精确闹钟权限不可用，跳过闹钟 ${alarm.id}：它到点不会响")
+            return
+        }
+
         val triggerAt = NextTrigger.next(alarm.hour, alarm.minute, alarm.repeatDays.mask, now)
 
         // FLAG_UPDATE_CURRENT 下 getBroadcast 必然返回非 null，这里的 ?: return
         // 只是为了让可空类型收敛，不是真实的失败分支。
         val pi = pendingIntent(alarm, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
 
-        alarmManager.setAlarmClock(
-            AlarmManager.AlarmClockInfo(triggerAt.toInstant().toEpochMilli(), showIntent()),
-            pi,
-        )
+        try {
+            alarmManager.setAlarmClock(
+                AlarmManager.AlarmClockInfo(triggerAt.toInstant().toEpochMilli(), showIntent()),
+                pi,
+            )
+        } catch (e: SecurityException) {
+            // 权限可能在上面的检查与这次调用之间被撤销，这层是兜底。
+            Log.e(TAG, "注册闹钟 ${alarm.id} 失败：精确闹钟权限不可用", e)
+        }
     }
 
     /** 取消某个闹钟的注册。不存在时静默返回。 */
@@ -2152,6 +2225,7 @@ class AlarmScheduler(
                 putExtra(EXTRA_MINUTE, it.minute)
                 putExtra(EXTRA_LABEL, it.label)
                 putExtra(EXTRA_VIBRATE, it.vibrate)
+                putExtra(EXTRA_REPEAT_MASK, it.repeatDays.mask)
             }
         }
         return PendingIntent.getBroadcast(
@@ -2163,12 +2237,15 @@ class AlarmScheduler(
     }
 
     companion object {
+        private const val TAG = "AlarmScheduler"
+
         const val ACTION_FIRE_ALARM = "com.example.clock.action.FIRE_ALARM"
         const val EXTRA_ALARM_ID = "extra_alarm_id"
         const val EXTRA_HOUR = "extra_hour"
         const val EXTRA_MINUTE = "extra_minute"
         const val EXTRA_LABEL = "extra_label"
         const val EXTRA_VIBRATE = "extra_vibrate"
+        const val EXTRA_REPEAT_MASK = "extra_repeat_mask"
         const val EXTRA_IS_SNOOZE = "extra_is_snooze"
 
         private const val SHOW_REQUEST_CODE = 99_999
@@ -2177,6 +2254,14 @@ class AlarmScheduler(
 ```
 
 > `FLAG_NO_CREATE` 时若 PendingIntent 不存在，`getBroadcast` 返回 null；因此 `pendingIntent` 的返回类型是可空的。取消时若为 null 直接返回。
+
+> **实战补充（评审回写，计划缺陷）**：本片段原来直接裸调 `setAlarmClock()`，没有 `canScheduleExactAlarms()` 检查、也没有 `SecurityException` 处理。spec 的 §5.5 只把 `SCHEDULE_EXACT_ALARM` 写成一行权限，没说它在 Android 12/12L 上是**可撤销**的；计划照抄了设计文档里「12/13 上系统自动授予」的说法（**这句是错的** —— 12/12L 上自动授予，但用户可以在「闹钟和提醒」里关掉），于是这个洞一直没被发现。用户选的目标系统正是「Android 12 或 13」。
+>
+> 后果有两条，都是**静默**的：UI 路径上异常逃进 `viewModelScope.launch` 直接崩；receiver 路径被宽泛的 `catch (Exception)` 吞成一行日志，而且 `scheduleAll()` 的循环**没有逐闹钟保护**，第一个抛异常就中止其后**全部**闹钟的注册 —— 即「闹钟静默不响」，本 app 最坏的失败形态。
+>
+> 三处修正：`schedule()` 开头查权限并跳过；`setAlarmClock()` 外面包一层 `catch (SecurityException)`（权限可能在检查与调用之间被撤销）；`scheduleAll()` 的两个循环各自逐闹钟隔离 —— 用 `catch (e: Exception)` 而**不是** `Throwable`，`OutOfMemoryError` 这类不该被当作「跳过这个闹钟」处理。
+>
+> 第三个构造参数 `canScheduleExactAlarms: () -> Boolean` 是**测试缝隙**：Robolectric 里`ShadowAlarmManager.canScheduleExactAlarms()` 默认为 **false**，不注入就只能测到「跳过」这一条路径。默认值只引用 `context`（构造参数），不碰 `alarmManager`（body 里的属性），所以在默认实参位置求值是安全的。凡是**间接**构造 `AlarmScheduler` 的测试（经 `AppGraph`）没有这个缝隙，必须在 `@Before` 里调`shadowOf(alarmManager).setCanScheduleExactAlarms(true)`，否则注册被静默跳过、测试假红。
 
 - [ ] **Step 5: 在 AppGraph 中接上 Scheduler**
 
@@ -2199,18 +2284,24 @@ object AppGraph {
     @Volatile
     private var schedulerRef: AlarmScheduler? = null
 
-    fun repository(context: Context): AlarmRepository =
-        repositoryRef ?: synchronized(this) {
+    fun repository(context: Context): AlarmRepository {
+        // 只捕获 applicationContext：repositoryRef 活到进程结束，闭包捕获谁就一直握着谁。
+        // repository() 的调用方里有 Activity（AlarmListScreen / AlarmEditScreen 的
+        // LocalContext.current），捕获它等于把那个 Activity 钉在进程里 —— 注意 dao 那一行
+        // 并不能解决这个问题，AlarmDatabase.get() 内部本来就强制 applicationContext。
+        val appContext = context.applicationContext
+        return repositoryRef ?: synchronized(this) {
             repositoryRef ?: AlarmRepository(
-                dao = AlarmDatabase.get(context).alarmDao(),
+                dao = AlarmDatabase.get(appContext).alarmDao(),
                 onAlarmsChanged = { removedId ->
                     // 删除时先把 id 交给调度器。跳掉这一步，被删闹钟的注册就再也
                     // 取消不掉，会在原定时间照常响 —— 见 AlarmRepository.delete。
-                    if (removedId != null) scheduler(context).cancel(removedId)
-                    scheduler(context).scheduleAll()
+                    if (removedId != null) scheduler(appContext).cancel(removedId)
+                    scheduler(appContext).scheduleAll()
                 },
             ).also { repositoryRef = it }
         }
+    }
 
     fun scheduler(context: Context): AlarmScheduler =
         schedulerRef ?: synchronized(this) {
@@ -2239,6 +2330,19 @@ object AppGraph {
 ```
 
 预期：7 个测试 PASS。
+
+> **实战补充（评审回写，计划缺陷）**：上面的 `repository()` 原本是表达式体，闭包直接捕获
+> `context` 形参。`repositoryRef` 是**活到进程结束**的单例，所以只要有一个调用方传进来的是
+> Activity（`AlarmListScreen` / `AlarmEditScreen` 里的 `LocalContext.current`），那个 Activity
+> 就被钉在进程里直到进程退出。同文件的 `scheduler()` 早就写了 `context.applicationContext`，
+> 只有这里漏了。
+>
+> 修的时候要认准真正的持有链：第一版修复把调用点改成
+> `AlarmDatabase.get(context.applicationContext)`，**那是个无效改动** ——
+> `AlarmDatabase.get()` 内部本来就是 `Room.databaseBuilder(context.applicationContext, ...)`，
+> 改调用点什么也没关，而**闭包捕获的仍是那个形参**。真正的修法是**在闭包之前**把
+> `val appContext = context.applicationContext` 求出来，让 `dao` 与闭包都只用它。
+> 值得记的一条：**要证伪「谁持有谁」，得追到闭包实际捕获的那个变量，而不是看调用点传了什么参数。**
 
 - [ ] **Step 7: 跑全量测试确认无回归**
 
@@ -2627,7 +2731,7 @@ git commit -m "feat(alarm): 新增 RingAudioController，保证铃声播放幂�
 **Interfaces:**
 - Consumes: `AlarmScheduler` 的 `EXTRA_*` 常量（Task 7）
 - Produces:
-  - `data class RingingAlarm(id: Long, hour: Int, minute: Int, label: String, vibrate: Boolean)`
+  - `data class RingingAlarm(id: Long, hour: Int, minute: Int, label: String, vibrate: Boolean, repeatDays: RepeatDays)`
   - `fun RingingAlarm.writeTo(intent: Intent)`
   - `RingingAlarm.Companion.from(intent: Intent): RingingAlarm?`（缺失或非法时返回 null）
 
@@ -2642,6 +2746,7 @@ package com.example.clock.alarm
 
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
+import com.example.clock.domain.RepeatDays
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -2656,7 +2761,14 @@ class RingingAlarmTest {
 
     @Test
     fun `写入后能原样读出`() {
-        val original = RingingAlarm(id = 5L, hour = 7, minute = 30, label = "起床", vibrate = false)
+        val original = RingingAlarm(
+            id = 5L,
+            hour = 7,
+            minute = 30,
+            label = "起床",
+            vibrate = false,
+            repeatDays = RepeatDays.WEEKDAYS,
+        )
         val intent = emptyIntent()
 
         original.writeTo(intent)
@@ -2730,6 +2842,7 @@ class RingingAlarmTest {
 package com.example.clock.alarm
 
 import android.content.Intent
+import com.example.clock.domain.RepeatDays
 
 /**
  * 一次响铃所需的全部展示数据。
@@ -2742,6 +2855,7 @@ data class RingingAlarm(
     val minute: Int,
     val label: String,
     val vibrate: Boolean,
+    val repeatDays: RepeatDays,
 ) {
     fun writeTo(intent: Intent) {
         intent.putExtra(AlarmScheduler.EXTRA_ALARM_ID, id)
@@ -2749,6 +2863,7 @@ data class RingingAlarm(
         intent.putExtra(AlarmScheduler.EXTRA_MINUTE, minute)
         intent.putExtra(AlarmScheduler.EXTRA_LABEL, label)
         intent.putExtra(AlarmScheduler.EXTRA_VIBRATE, vibrate)
+        intent.putExtra(AlarmScheduler.EXTRA_REPEAT_MASK, repeatDays.mask)
     }
 
     companion object {
@@ -2769,6 +2884,14 @@ data class RingingAlarm(
                 minute = minute,
                 label = intent.getStringExtra(AlarmScheduler.EXTRA_LABEL).orEmpty(),
                 vibrate = intent.getBooleanExtra(AlarmScheduler.EXTRA_VIBRATE, true),
+                // 缺这个 extra 绝不能当成“非法”：app 更新前建的 PendingIntent 可能还活着，
+                // 把它判成“不响”是这个 app 最坏的失败形态。默认值 = 仅一次。
+                repeatDays = RepeatDays(
+                    intent.getIntExtra(
+                        AlarmScheduler.EXTRA_REPEAT_MASK,
+                        RepeatDays.NONE_MASK,
+                    ),
+                ),
             )
         }
 
@@ -2782,7 +2905,11 @@ data class RingingAlarm(
 .\gradlew.bat :app:testDebugUnitTest --tests "com.example.clock.alarm.RingingAlarmTest" --no-daemon
 ```
 
-预期：7 个测试 PASS。
+预期：8 个测试 PASS。
+
+> **实战补充（评审回写，计划缺陷）**：`RingingAlarm` 原来**没有** `repeatDays` —— spec §6.3 明文要求响铃界面展示「星期」（`design.md:393`：「深色全屏，居中展示超大时间 + 标签 + 星期」），而数据从未进过 Intent，界面也就无从展示。计划在 Task 9 的片段里漏掉了这个字段，失准的是计划，不是实现。
+>
+> `from()` 里那条注释是**做法本身**，不只是解释：`EXTRA_REPEAT_MASK` 缺失时默认 `RepeatDays.NONE_MASK`，**绝不返回 null**。理由是可升级性 —— app 更新前创建的 PendingIntent 可能仍然活在系统里，把它判成「非法 → 放弃这次响铃」，正好就是这个 app 最坏的失败形态。
 
 - [ ] **Step 5: Commit**
 
@@ -3193,6 +3320,19 @@ object RingNotification {
 
     private const val CHANNEL_NAME = "闹钟响铃"
 
+    private const val TAG = "RingNotification"
+
+    /**
+     * 响铃 Activity 的类名。刻意用字符串而不是类引用：alarm 层不能 import ui 层
+     * （唯一的分层例外是 AlarmReceiver → RingActivity，那是启动 Activity 的
+     * 显式 Intent，理由不同）。
+     *
+     * 可见性 `internal` 是为了让 `RingNotificationTest` 能断言这个名字仍然解析得到
+     * 一个 Activity —— 改名 RingActivity 时编译与测试都不会有任何反应，
+     * 只有通知点击在真机上静默失效。
+     */
+    internal const val RING_ACTIVITY_CLASS = "com.example.clock.ui.ring.RingActivity"
+
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return
@@ -3212,6 +3352,15 @@ object RingNotification {
     fun build(context: Context, ringing: RingingAlarm): Notification {
         val timeText = formatTime(ringing.hour, ringing.minute)
         val bodyText = ringing.label.ifBlank { "闹钟时间到了" }
+
+        // 全屏 Intent 是否真的会弹出，用户在 Android 14+ 上可以关掉。真出问题时，
+        // 这行日志是唯一能区分“没弹”与“弹了但用户没看见”的证据。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            if (manager?.canUseFullScreenIntent() == false) {
+                Log.w(TAG, "全屏 Intent 权限被拒绝，响铃将退化为普通通知")
+            }
+        }
 
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
@@ -3242,13 +3391,21 @@ object RingNotification {
     private fun formatTime(hour: Int, minute: Int): String =
         "%02d:%02d".format(hour, minute)
 
-    /** 指向全屏响铃界面。用 Intent 的 action 而非类引用，保持 alarm 层不依赖 ui 层。 */
+    /** 指向全屏响铃界面。用类名字符串而非类引用，保持 alarm 层不依赖 ui 层。 */
     private fun ringActivityIntent(
         context: Context,
         ringing: RingingAlarm,
     ): PendingIntent {
-        val intent = Intent(RingService.ACTION_SHOW_RING_UI).apply {
-            setPackage(context.packageName)
+        val intent = Intent().apply {
+            // 刻意用类名字符串而不是类引用：alarm 层不能 import ui 层。
+            // 必须是显式 Intent —— 隐式 Intent 在 Android 14+ 上不匹配非导出组件，
+            // 而这既是通知点击入口，也是全屏 Intent（响铃的最后一道防线）。
+            setClassName(context.packageName, RING_ACTIVITY_CLASS)
+            // 全屏 Intent 由系统在非 Activity 的上下文里启动，manifest 已把 RingActivity
+            // 声明为 singleTask + taskAffinity=""，补 NEW_TASK 让这个 Intent 与那个声明一致。
+            // 代价不对称：若本不需要，singleTask Activity 上的 NEW_TASK 不改变任何行为；
+            // 若需要而没加，全屏响铃会静默退化成一条普通通知。
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ringing.writeTo(this)
         }
         return PendingIntent.getActivity(
@@ -3278,7 +3435,13 @@ object RingNotification {
 }
 ```
 
-> **`ringActivityIntent` 的说明**：这里用 action + `setPackage` 而不是 `Intent(context, RingActivity::class.java)`，同样是为了不破坏 `alarm/` 不依赖 `ui/` 的分层约束。`RingActivity` 在 manifest 里声明一个匹配 `ACTION_SHOW_RING_UI` 的 intent-filter（Task 12 Step 5）。`FLAG_IMMUTABLE` 的 PendingIntent 用隐式 Intent 是允许的 —— 限制只针对 `FLAG_MUTABLE`。
+> **`ringActivityIntent` 的说明**：用类名字符串 + `setClassName` 而不是 `Intent(context, RingActivity::class.java)`，是为了不破坏 `alarm/` 不依赖 `ui/` 的分层约束（这是**唯一的**分层例外之外的地方，另一处是 `AlarmReceiver` 直接 import `RingActivity`）。
+>
+> **实战补充（评审回写，计划缺陷）**：这里最初写的是 action + `setPackage` 的**隐式** Intent，靠 manifest 的 `<intent-filter>` 解析到 `RingActivity`。那条路是错的：`targetSdk = 35` 时 Android 14 的隐式 Intent 限制生效，而 `RingActivity` 必须是 `exported="false"`（它只该被本 app 启动），隐式 Intent **不匹配非导出组件**。改成显式零代价 —— 同 app 内显式指向非导出组件是允许的；不改则 contentIntent 与 fullScreenIntent 双双失效，那是响铃链路的最后一道防线。
+>
+> 随之删掉了两处**看起来承重、其实没人用**的死配置：`RingService.ACTION_SHOW_RING_UI` 常量，和 `RingActivity` 在 manifest 里的 `<intent-filter>`。留着它们比删掉更危险 —— 下一个人会以为那条路还在。
+>
+> 另外补了一行 `canUseFullScreenIntent()` 的告警日志。它是 **API 34** 才有的，`minSdk = 26` 下必须做版本判断（`assembleDebug` **不跑 lint**，写错不会有人告诉你）。
 
 - [ ] **Step 4: 写服务**
 
@@ -3484,6 +3647,16 @@ fun RingScreen(
                 )
             }
 
+            // spec §6.3 明文要求展示「星期」。复用列表页同一个 summary()，措辞一致；
+            // 无条件展示（含一次性闹钟的「仅一次」）——凌晨看到它是有效信息。
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = ringing.repeatDays.summary(),
+                style = MaterialTheme.typography.bodyLarge,
+                color = onBackground.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center,
+            )
+
             Spacer(Modifier.height(64.dp))
 
             Row(
@@ -3513,6 +3686,8 @@ fun RingScreen(
     }
 }
 ```
+
+> **实战补充（评审回写，计划缺陷）**：上面的「星期」一行是 spec §6.3 的明文要求（`design.md:393`），计划在 Task 12 的片段里漏掉了，Task 9 的 `RingingAlarm` 也漏了 `repeatDays` 字段 —— 两处一起漏，界面上就一直只有时间 + 标签。评审把它从「打磨项」升为必改：本轮**只有一次**修复波，「放到以后」等于永远不做。改动纯机械，不碰 `singleTask` / `onNewIntent` 那套。
 
 - [ ] **Step 2: 写 Activity**
 
@@ -4155,12 +4330,10 @@ class SystemEventReceiver : BroadcastReceiver() {
             android:showWhenLocked="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Material.NoActionBar"
-            android:turnScreenOn="true">
-            <intent-filter>
-                <action android:name="com.example.clock.action.SHOW_RING_UI" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
+            android:turnScreenOn="true" />
+
+        <!-- 刻意**没有** intent-filter（早先版本有过一个匹配 ACTION_SHOW_RING_UI 的）。
+             RingActivity 只由本 app 用**显式** Intent 启动，见 RingNotification.RING_ACTIVITY_CLASS。 -->
 
         <service
             android:name=".alarm.RingService"
@@ -4190,22 +4363,15 @@ class SystemEventReceiver : BroadcastReceiver() {
 
 > `android:showOnLockScreen` 与 `android:showWhenLocked` 都写上：前者被部分旧 ROM 使用，后者是官方属性，两者并存无害。
 
-**同一步收尾：给 `RingNotification.ringActivityIntent()` 的全屏 Intent 补 `FLAG_ACTIVITY_NEW_TASK`。**
+**同一步收尾：`RingNotification.ringActivityIntent()` 的全屏 Intent 必须带 `FLAG_ACTIVITY_NEW_TASK`。**
 
 上面 manifest 把 `RingActivity` 声明为 `launchMode="singleTask"` + `taskAffinity=""`，含义是
-"这个界面独占自己的任务栈"。但 `RingNotification` 里那个全屏 Intent 没带配套的 flag：
-
-`app/src/main/java/com/example/clock/alarm/RingNotification.kt`
+"这个界面独占自己的任务栈"。所以那个全屏 Intent 必须带配套的 flag —— 完整实现见 Task 11 的回写片段（那里同时把它从隐式改成了显式 `setClassName`）。要补的就是这一段：
 
 ```kotlin
-    private fun ringActivityIntent(
-        context: Context,
-        ringing: RingingAlarm,
-    ): PendingIntent {
-        val intent = Intent(RingService.ACTION_SHOW_RING_UI).apply {
-            setPackage(context.packageName)
-            // 全屏 Intent 由系统在非 Activity 的上下文里启动，而且这里是**隐式** Intent
-            // （靠上面的 action 解析到 RingActivity）。上面 manifest 已把 RingActivity
+        val intent = Intent().apply {
+            setClassName(context.packageName, RING_ACTIVITY_CLASS)
+            // 全屏 Intent 由系统在非 Activity 的上下文里启动，manifest 已把 RingActivity
             // 声明为 singleTask + taskAffinity=""，补 NEW_TASK 让这个 Intent 与那个声明一致。
             // 代价不对称：若本不需要，singleTask Activity 上的 NEW_TASK 不改变任何行为；
             // 若需要而没加，全屏响铃会静默退化成一条普通通知。
@@ -5595,7 +5761,8 @@ git commit -m "feat(ui): 新增闹钟编辑界面"
 
 ## 真机回归清单
 
-改动响铃链路后请逐条验证。**第 7、8 条在模拟器上不可靠，必须真机。**
+改动响铃链路后请逐条验证。**第 7、8 条在模拟器上不可靠，必须真机；第 7 条还依赖系统设置，
+先按下方「厂商 ROM 设置」把本 app 加进白名单再验证。**
 
 - [ ] 1. 建一个 2 分钟后的闹钟 → 熄屏 → 到点全屏响铃 + 震动
 - [ ] 2. 点「贪睡」→ 10 分钟后再次响铃
@@ -5604,8 +5771,11 @@ git commit -m "feat(ui): 新增闹钟编辑界面"
 - [ ] 5. 重启手机 → 闹钟仍然有效
 - [ ] 6. 手动修改系统时间（前后各调一次）→ 闹钟重算正确，不静默失效
 - [ ] 7. 在最近任务列表里划掉 app → 闹钟仍然响
+      （国产 ROM 上这条大概率失败，先在系统设置里做「厂商 ROM 设置」再验证）
 - [ ] 8. **熄屏静置 30 分钟 → Doze 下仍精确响**（最关键）
-- [ ] 9. 响铃中从通知栏点「关闭」→ 与在界面里点关闭行为一致
+- [ ] 9. 响铃中从通知栏点「关闭」→ 铃声**立即停止**；响铃界面**可能仍留在屏幕上**，
+      点它上面的「关闭」即可退出。（注意：这与在界面里点「关闭」**不等价** —— 通知的
+      「关闭」只停声音并结束前台服务，不会 finish 响铃 Activity。）
 - [ ] 10. 设备切换时区 → 重复闹钟仍按本地时间正确触发
 - [ ] 11. 响铃时**不出现两路铃声重叠**
 - [ ] 12. 连续贪睡数次 → 每次铃声都正常开始与停止，无残留
@@ -5616,6 +5786,21 @@ git commit -m "feat(ui): 新增闹钟编辑界面"
 - [ ] 17. **两个闹钟前后脚响**：建两个只差 1 分钟的闹钟（A 先响、B 后响），A 响时**不点关闭**，
       等 B 触发 → 全屏界面显示的必须是 **B** 的时间，点「贪睡」贪睡的也必须是 **B**
       （不能显示 A、也不能把 A 贪睡掉）。也可以按 Home 把 A 的响铃界面切到后台，再等 B 触发。
+- [ ] 18. 全屏响铃被抑制时（锁屏未解锁 / 全屏 Intent 权限未授予）→ 通知仍要响，
+      且通知上的「关闭」与「贪睡 10 分钟」都要能用。
+- [ ] 19. `adb install -r` 覆盖安装（触发 `MY_PACKAGE_REPLACED`）→ 原有闹钟仍然有效。
+- [ ] 20. 把系统默认闹钟铃声设为「无」→ 记录实际表现（预期：无声音，界面仍在，可关闭）。
+
+## 厂商 ROM 设置
+
+小米 / 华为 / OPPO / vivo 等厂商 ROM 的省电策略会杀掉前台服务，导致「最近任务划掉
+app 后闹钟不再响」（清单第 7 条）。测试前请在系统设置里为本 app 打开：
+
+- 电池白名单 /「不受限制」/「允许后台运行」
+- 自启动（部分 ROM 叫「允许后台弹出界面」「关联启动」）
+
+否则第 7 条大概率失败。这是国内 Android 闹钟类应用的通用坑（见 `docs/superpowers/specs/`
+设计文档 §8.3）。
 
 ## 已知风险
 
@@ -5632,9 +5817,17 @@ git commit -m "feat(ui): 新增闹钟编辑界面"
 - `ANDROID_HOME` 指向 SDK 根目录
 ```
 
+> **实战补充（评审回写，计划缺陷）**：上面的模板原来是计划里写的 17 条版本，**漏掉了 spec §8.3 明文要求写进 README 的那一段**。`design.md:465-471` 写着「小米/华为/OPPO/vivo 等厂商 ROM 额外需要…**需要在 README 中写明**」，本计划自己的文件表（`README.md` 一行）和 Step 2 也都把它标成必做 —— 但 Step 3 的模板里没有这一段，实现者逐字照抄，做对了它被要求做的事。**失准的是计划。**上面已补成与仓库里 `README.md` 逐字一致。
+>
+> 随之新增第 18–20 条（全屏被抑制 / `adb install -r` 覆盖安装 / 无默认铃声），并把第 7 条的说明指向新增的「厂商 ROM 设置」一节。
+>
+> **第 9 条的措辞被校正过**：原文说从通知栏点「关闭」与在界面里点关闭「行为一致」，而**并不一致** —— 通知的 `ACTION_STOP` 只停声音并结束前台服务，不会 finish 响铃 Activity，界面仍在屏幕上。照原文跑必然报一个假 bug。只改措辞，**不动代码**：让 `ACTION_STOP` 去 finish Activity 需要新增一条跨组件通道，JVM 里测不到，风险与收益不成比例，留给 v2。
+>
+> **三处已知的、接受不改的措辞瑕疵**（Task 17 评审报的 LOW，全部是计划原文，改动要同时动 README 与计划，而后果只是「读者可能略被误导」）：第 28 行「（Robolectric）」这个括号挂得太宽 —— `NextTriggerTest` / `RepeatDaysTest` 是纯 JUnit；第 13 条的「界面里有明确提示」指的是**拒绝权限当下**列表页弹的说明对话框，不是响铃界面上的提示；「build-tools 35.0.0」来自 AGP 8.7.3 的默认值，仓库里并未钉版本。三条的主张都为真，只是简写失准。
+
 - [ ] **Step 4: 逐条执行回归清单**
 
-按 README 中的 17 条逐条在真机上验证，把不符合预期的条目记下来。
+按 README 中的 20 条逐条在真机上验证，把不符合预期的条目记下来。
 
 **第 8 条请务必执行**：设一个 30 分钟后的闹钟，熄屏放一边，不要碰手机。这是唯一能验证 Doze 下可靠性的方法，也是整个 app 的核心价值所在。
 
@@ -5656,5 +5849,5 @@ git commit -m "docs: 新增 README 与真机回归清单"
 - `.\gradlew.bat test` 全绿，无需连接设备
 - `.\gradlew.bat assembleDebug` 成功
 - `app/schemas/` 下的 Room schema 已提交
-- README 中的 17 条真机回归清单全部通过（第 14 条可以只记录现象）
+- README 中的 20 条真机回归清单全部通过（第 14、20 条可以只记录现象）
 - `domain/` 包内 `grep -r "import android" app/src/main/java/com/example/clock/domain/` 无输出
